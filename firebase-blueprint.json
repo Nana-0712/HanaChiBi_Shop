@@ -1,0 +1,122 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Stationery product information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "image": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "brand": { "type": "string" },
+        "isHot": { "type": "boolean" },
+        "isFlashSale": { "type": "boolean" },
+        "isNew": { "type": "boolean" },
+        "soldCount": { "type": "number" },
+        "totalStock": { "type": "number" },
+        "rating": { "type": "number" },
+        "reviews": { "type": "number" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "price", "category"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "color": { "type": "string" },
+        "image": { "type": "string" },
+        "banner": { "type": "string" },
+        "subCategories": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "customer": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "phone": { "type": "string" },
+            "address": { "type": "string" },
+            "note": { "type": "string" },
+            "voucher": { "type": "string" },
+            "paymentMethod": { "type": "string" },
+            "shippingMethod": { "type": "string" },
+            "useCoins": { "type": "boolean" }
+          }
+        },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "discount": { "type": "number" },
+        "shipping": { "type": "number" },
+        "coinsUsed": { "type": "number" },
+        "earnedCoins": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customer", "items", "total", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "coins": { "type": "number" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "App global settings",
+      "type": "object",
+      "properties": {
+        "logo": { "type": "string" },
+        "loginBanner": { "type": "string" },
+        "loginBannerText": { "type": "string" },
+        "mascotImage": { "type": "string" },
+        "mascotText": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Collection of categories"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of orders"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles"
+    },
+    "/settings/global": {
+      "schema": "Settings",
+      "description": "Global app settings"
+    }
+  }
+}

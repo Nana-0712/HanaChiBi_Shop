@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Dancing+Script:wght@700&display=swap');
+
+@theme {
+  --color-primary: #ffb7c5;
+  --color-primary-light: #ffe4e9;
+  --color-primary-dark: #ff8fa3;
+  --color-pastel-blue: #bfe6ff;
+  --color-pastel-yellow: #fff4bd;
+  --color-pastel-purple: #e2d1f9;
+  --color-pastel-green: #c1f0c1;
+  --font-sans: "Quicksand", ui-sans-serif, system-ui, sans-serif;
+  --font-script: "Dancing Script", cursive;
+}
+
+@layer base {
+  body {
+    @apply bg-[#fffcfd] text-gray-700 antialiased;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-white font-black px-6 py-3 rounded-2xl 
+           hover:bg-primary-dark transition-all duration-300 
+           active:scale-95 shadow-lg shadow-primary/20 flex items-center justify-center gap-2;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-primary border-2 border-primary-light font-black px-6 py-3 rounded-2xl 
+           hover:bg-primary-light transition-all duration-300 
+           active:scale-95 flex items-center justify-center gap-2;
+  }
+
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-xl;
+  }
+
+  .card-hover {
+    @apply transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-primary/10;
+  }
+
+  .input-primary {
+    @apply w-full px-5 py-4 rounded-2xl border-2 border-primary-light bg-white/50
+           focus:border-primary focus:ring-0 transition-all duration-300 outline-none;
+  }
+
+  .badge-hot {
+    @apply bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter;
+  }
+
+  .badge-new {
+    @apply bg-primary text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter;
+  }
+
+  .badge-sale {
+    @apply bg-yellow-400 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter;
+  }
+
+  .section-title {
+    @apply text-3xl md:text-4xl font-black text-gray-900 tracking-tight;
+  }
+
+  .nav-link {
+    @apply text-gray-600 font-bold hover:text-primary transition-colors duration-300 relative py-2;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-primary-light/20;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-primary-light rounded-full hover:bg-primary-dark/40 transition-colors;
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}

@@ -1,0 +1,99 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: products
+    // Document ID: auto-generated or custom
+    // Fields:
+    //   - name: string (required)
+    //   - price: number (required)
+    //   - category: string (required)
+    //   ... other optional fields
+    //
+    // Collection: categories
+    // Fields:
+    //   - name: string (required)
+    //   ...
+    //
+    // Collection: orders
+    // Fields:
+    //   - userId: string (optional for guest, but app requires login now)
+    //   - customer: map (required)
+    //   - items: list (required)
+    //   - total: number (required)
+    //   - status: string (required)
+    //
+    // Collection: users
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - role: string (admin/user)
+    //   - coins: number
+    //
+    // Collection: settings
+    // Document: global
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          request.auth.token.email in ["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"]
+        );
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId && 
+                    (request.resource.data.role == 'user' || 
+                     (request.resource.data.role == 'admin' && request.auth.token.email in ["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"])) &&
+                    isValidEmail(request.resource.data.email);
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin() || (isOwner(resource.data.userId) && request.resource.data.status == 'Đã hủy' && resource.data.status == 'Chờ xác nhận');
+      allow delete: if isAdmin();
+    }
+  }
+}
