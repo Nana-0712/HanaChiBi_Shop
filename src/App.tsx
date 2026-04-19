@@ -208,12 +208,14 @@ export default function App() {
   const [liveProducts, setLiveProducts] = useState<Product[]>([]);
   const [hasLoadedProducts, setHasLoadedProducts] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
-  const [cart, setCart] = useState<{product: Product, quantity: number}[]>([]);
+  const [cart, setCart] = useState<{product: Product, quantity: number, selectedOptions?: Record<string, string>}[]>([]);
+  const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
   const [sortBy, setSortBy] = useState("newest");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
+  const [quickViewOptions, setQuickViewOptions] = useState<Record<string, string>>({});
   const [showCart, setShowCart] = useState(() => localStorage.getItem('hanachibi_show_cart') === 'true');
   const [showCheckout, setShowCheckout] = useState(() => localStorage.getItem('hanachibi_show_checkout') === 'true');
   const [showLogin, setShowLogin] = useState(false);
@@ -277,7 +279,6 @@ export default function App() {
     }
   }, [user, customerInfo.name]);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
 
   const decorationPositions = DECORATION_POSITIONS;
 
@@ -809,17 +810,37 @@ export default function App() {
     );
   };
 
-  const addToCart = (product: Product) => {
+  const getCartItemId = useCallback((item: {product: Product, selectedOptions?: Record<string, string>}) => {
+    return `${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`;
+  }, []);
+
+  const addToCart = (product: Product, options?: Record<string, string>) => {
+    const newItem = { product, quantity: 1, selectedOptions: options };
+    const newItemId = getCartItemId(newItem);
+    
     setCart(prev => {
-      const existing = prev.find(item => String(item.product.id) === String(product.id));
+      const existing = prev.find(item => getCartItemId(item) === newItemId);
       if (existing) {
-        return prev.map(item => String(item.product.id) === String(product.id) ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => getCartItemId(item) === newItemId ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, newItem];
     });
-    // Auto select when added
-    setSelectedCartItems(prev => prev.includes(String(product.id)) ? prev : [...prev, String(product.id)]);
+    
+    setSelectedCartItems(prev => prev.includes(newItemId) ? prev : [...prev, newItemId]);
     showAlert("Đã thêm vào giỏ hàng! ✨", "success");
+  };
+
+  const openQuickView = (product: Product) => {
+    setQuickViewProduct(product);
+    setQuickViewOptions({});
+  };
+
+  const handleAddToCartClick = (product: Product) => {
+    if (product.options && product.options.length > 0) {
+      openQuickView(product);
+    } else {
+      addToCart(product);
+    }
   };
 
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -1821,6 +1842,62 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div className="space-y-4">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Phân loại (Màu sắc, Kích thước...)</label>
+                      <div className="space-y-4 bg-gray-50 p-6 rounded-3xl border-2 border-gray-100">
+                        {(editingProduct.options || []).map((opt, idx) => (
+                          <div key={idx} className="flex flex-col md:flex-row gap-4 items-start md:items-end bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                            <div className="w-full md:w-1/3 space-y-1">
+                              <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Tên (Ví dụ: Màu sắc)</label>
+                              <input 
+                                value={opt.name}
+                                onChange={e => {
+                                  const newOpts = [...(editingProduct.options || [])];
+                                  newOpts[idx] = { ...newOpts[idx], name: e.target.value };
+                                  setEditingProduct({...editingProduct, options: newOpts});
+                                }}
+                                placeholder="Màu sắc"
+                                className="w-full px-4 py-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
+                              />
+                            </div>
+                            <div className="w-full md:flex-grow space-y-1">
+                              <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Giá trị (Cách nhau bằng dấu phẩy)</label>
+                              <input 
+                                value={opt.values.join(", ")}
+                                onChange={e => {
+                                  const newOpts = [...(editingProduct.options || [])];
+                                  newOpts[idx] = { ...newOpts[idx], values: e.target.value.split(",").map(v => v.trim()).filter(v => v !== "") };
+                                  setEditingProduct({...editingProduct, options: newOpts});
+                                }}
+                                placeholder="Hồng, Xanh, Vàng"
+                                className="w-full px-4 py-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
+                              />
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                const newOpts = (editingProduct.options || []).filter((_, i) => i !== idx);
+                                setEditingProduct({...editingProduct, options: newOpts});
+                              }}
+                              className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all self-end md:mb-1"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        ))}
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const newOpts = [...(editingProduct.options || []), { name: "", values: [] }];
+                            setEditingProduct({...editingProduct, options: newOpts});
+                          }}
+                          className="w-full py-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-black text-xs uppercase tracking-widest hover:border-primary-light hover:text-primary-dark hover:bg-white transition-all flex items-center justify-center gap-2"
+                        >
+                          <Zap className="w-4 h-4" /> Thêm phân loại mới
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mô tả sản phẩm</label>
                       <textarea 
@@ -2290,7 +2367,7 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-8">
-                  {(liveProducts.length > 0 ? liveProducts.filter(p => p.isFlashSale) : FLASH_SALE_PRODUCTS).slice(0, 5).map((product) => (
+                  {(hasLoadedProducts && liveProducts.length > 0 ? liveProducts.filter(p => p.isFlashSale) : (hasLoadedProducts && liveProducts.length === 0 ? [] : FLASH_SALE_PRODUCTS)).slice(0, 5).map((product) => (
                     <div key={product.id} className="bg-white rounded-[2.5rem] p-5 shadow-xl relative group hover:-translate-y-2 transition-all duration-500 border-2 border-transparent hover:border-red-200">
                       {product.originalPrice && product.price < product.originalPrice && (
                         <div className="absolute top-4 right-4 z-10 bg-red-600 text-white font-black text-xs px-3 py-1 rounded-xl shadow-lg">
@@ -2301,14 +2378,14 @@ export default function App() {
                         <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" referrerPolicy="no-referrer" />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                           <button 
-                            onClick={() => setQuickViewProduct(product)}
+                            onClick={() => openQuickView(product)}
                             className="w-12 h-12 bg-white text-red-600 rounded-2xl flex items-center justify-center hover:scale-110 transition-transform shadow-xl"
                             title="Xem nhanh"
                           >
                             <Eye className="w-6 h-6" />
                           </button>
                           <button 
-                            onClick={() => addToCart(product)}
+                            onClick={() => handleAddToCartClick(product)}
                             className="w-12 h-12 bg-red-600 text-white rounded-2xl flex items-center justify-center hover:scale-110 transition-transform shadow-xl"
                             title="Thêm vào giỏ"
                           >
@@ -2446,7 +2523,7 @@ export default function App() {
                 {selectedCategory === "all" && !searchQuery ? (
                   <div className="space-y-24">
                     {categories.filter(c => c.id !== 'all').map(category => {
-                      const categoryProducts = (liveProducts.length > 0 ? liveProducts : PRODUCTS)
+                      const categoryProducts = (hasLoadedProducts && liveProducts.length > 0 ? liveProducts : (hasLoadedProducts && liveProducts.length === 0 ? [] : PRODUCTS))
                         .filter(p => p.category === category.id)
                         .slice(0, 5);
 
@@ -2485,14 +2562,14 @@ export default function App() {
                                 >
                                   Sản phẩm HOT
                                 </button>
-                                {category.subCategories.slice(0, 4).map(sub => (
+                                {category.subCategories.map(sub => (
                                   <button 
                                     key={sub}
                                     onClick={() => {
                                       setSelectedCategory(category.id);
                                       setSelectedSubCategory(sub);
                                     }}
-                                    className="px-6 py-2 bg-white border-2 border-gray-100 text-gray-400 rounded-full text-xs font-black uppercase tracking-widest hover:border-primary-light hover:text-primary-dark transition-all"
+                                    className="px-6 py-2 bg-white border-2 border-gray-100 text-gray-400 rounded-full text-xs font-black uppercase tracking-widest hover:border-primary-light hover:text-primary-dark transition-all whitespace-nowrap"
                                   >
                                     {sub}
                                   </button>
@@ -2524,13 +2601,13 @@ export default function App() {
                                     />
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                       <button 
-                                        onClick={() => setQuickViewProduct(product)}
+                                        onClick={() => openQuickView(product)}
                                         className="w-10 h-10 bg-white text-gray-900 rounded-xl flex items-center justify-center hover:scale-110 transition-transform shadow-lg"
                                       >
                                         <Eye className="w-5 h-5" />
                                       </button>
                                       <button 
-                                        onClick={() => addToCart(product)}
+                                        onClick={() => handleAddToCartClick(product)}
                                         className="w-10 h-10 bg-primary-dark text-white rounded-xl flex items-center justify-center hover:scale-110 transition-transform shadow-lg"
                                       >
                                         <ShoppingCart className="w-5 h-5" />
@@ -2542,7 +2619,7 @@ export default function App() {
                                     <span className="text-lg font-black text-primary-dark">{product.price.toLocaleString('vi-VN')}đ</span>
                                     <button 
                                       onClick={() => {
-                                        addToCart(product);
+                                        handleAddToCartClick(product);
                                         if (!user) {
                                           showAlert("Opps! Bạn cần đăng nhập để có thể đặt hàng nhé 🌸", "info");
                                           setShowLogin(true);
@@ -2613,7 +2690,7 @@ export default function App() {
                             )}
                             <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity" />
                             <button 
-                              onClick={() => addToCart(product)}
+                              onClick={() => handleAddToCartClick(product)}
                               className="absolute bottom-4 right-4 w-14 h-14 bg-primary-dark text-white rounded-2xl shadow-xl flex items-center justify-center opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 hover:scale-110 active:scale-95"
                             >
                               <ShoppingCart className="w-6 h-6" />
@@ -2634,7 +2711,7 @@ export default function App() {
                               )}
                             </div>
                             <button 
-                              onClick={() => setQuickViewProduct(product)}
+                              onClick={() => openQuickView(product)}
                               className="w-10 h-10 rounded-xl bg-gray-50 text-gray-400 hover:bg-primary-light/20 hover:text-primary-dark transition-all flex items-center justify-center"
                             >
                               <Eye className="w-5 h-5" />
@@ -3026,12 +3103,41 @@ export default function App() {
                 <div className="text-3xl font-black text-primary-dark mb-8">
                   {quickViewProduct.price.toLocaleString('vi-VN')}đ
                 </div>
+
+                {quickViewProduct.options && quickViewProduct.options.length > 0 && (
+                  <div className="mb-8 space-y-4">
+                    {quickViewProduct.options.map(opt => (
+                      <div key={opt.name} className="space-y-2">
+                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">{opt.name}</label>
+                        <div className="flex flex-wrap gap-2">
+                          {opt.values.map(val => (
+                            <button 
+                              key={val}
+                              onClick={() => setQuickViewOptions(prev => ({...prev, [opt.name]: val}))}
+                              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 ${quickViewOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light'}`}
+                            >
+                              {val}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <p className="text-gray-500 mb-10 leading-relaxed font-medium">
                   {quickViewProduct.description}
                 </p>
                 <div className="mt-auto flex gap-4">
                   <button 
-                    onClick={() => { addToCart(quickViewProduct); setQuickViewProduct(null); }}
+                    onClick={() => { 
+                      if (quickViewProduct.options?.some(opt => !quickViewOptions[opt.name])) {
+                        showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                        return;
+                      }
+                      addToCart(quickViewProduct, quickViewOptions); 
+                      setQuickViewProduct(null); 
+                    }}
                     className="flex-grow btn-primary flex items-center justify-center gap-3"
                   >
                     <ShoppingCart className="w-5 h-5" /> Thêm vào giỏ hàng
@@ -3326,7 +3432,7 @@ export default function App() {
                     checked={cart.length > 0 && selectedCartItems.length === cart.length}
                     onChange={(e) => {
                       if (e.target.checked) {
-                        setSelectedCartItems(cart.map(item => String(item.product.id)));
+                        setSelectedCartItems(cart.map(item => getCartItemId(item)));
                       } else {
                         setSelectedCartItems([]);
                       }
@@ -3350,52 +3456,64 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="flex flex-col gap-6">
-                    {cart.map(item => (
-                      <div key={item.product.id} className="flex gap-4 items-center bg-white p-4 rounded-3xl border border-gray-100 shadow-sm">
-                        <input 
-                          type="checkbox"
-                          checked={selectedCartItems.includes(String(item.product.id))}
-                          onChange={() => {
-                            if (selectedCartItems.includes(String(item.product.id))) {
-                              setSelectedCartItems(selectedCartItems.filter(id => id !== String(item.product.id)));
-                            } else {
-                              setSelectedCartItems([...selectedCartItems, String(item.product.id)]);
-                            }
-                          }}
-                          className="w-5 h-5 rounded accent-primary-dark cursor-pointer shrink-0"
-                        />
-                        <img src={cleanImageUrl(item.product.image)} className="w-20 h-20 rounded-2xl object-cover border-2 border-primary-light/20" />
-                        <div className="flex-grow">
-                          <h4 className="font-bold text-gray-800 text-sm line-clamp-1">{item.product.name}</h4>
-                          <p className="text-primary-dark font-black text-sm mt-1">{(item.product.price * item.quantity).toLocaleString('vi-VN')}đ</p>
-                          <div className="flex items-center gap-3 mt-2">
-                            <button 
-                              onClick={() => {
-                                if (item.quantity > 1) {
-                                  setCart(cart.map(c => String(c.product.id) === String(item.product.id) ? { ...c, quantity: c.quantity - 1 } : c));
-                                }
-                              }}
-                              className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
-                            >
-                              -
-                            </button>
-                            <span className="font-black text-sm w-4 text-center">{item.quantity}</span>
-                            <button 
-                              onClick={() => setCart(cart.map(c => String(c.product.id) === String(item.product.id) ? { ...c, quantity: c.quantity + 1 } : c))}
-                              className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
-                            >
-                              +
-                            </button>
+                    {cart.map(item => {
+                      const cartId = getCartItemId(item);
+                      return (
+                        <div key={cartId} className="flex gap-4 items-center bg-white p-4 rounded-3xl border border-gray-100 shadow-sm">
+                          <input 
+                            type="checkbox"
+                            checked={selectedCartItems.includes(cartId)}
+                            onChange={() => {
+                              if (selectedCartItems.includes(cartId)) {
+                                setSelectedCartItems(selectedCartItems.filter(id => id !== cartId));
+                              } else {
+                                setSelectedCartItems([...selectedCartItems, cartId]);
+                              }
+                            }}
+                            className="w-5 h-5 rounded accent-primary-dark cursor-pointer shrink-0"
+                          />
+                          <img src={cleanImageUrl(item.product.image)} className="w-20 h-20 rounded-2xl object-cover border-2 border-primary-light/20" />
+                          <div className="flex-grow">
+                            <h4 className="font-bold text-gray-800 text-sm line-clamp-1">{item.product.name}</h4>
+                            {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {Object.entries(item.selectedOptions).map(([name, value]) => (
+                                  <span key={name} className="text-[10px] px-2 py-0.5 bg-primary-light/30 text-primary-dark rounded-full font-bold">
+                                    {name}: {value}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <p className="text-primary-dark font-black text-sm mt-1">{(item.product.price * item.quantity).toLocaleString('vi-VN')}đ</p>
+                            <div className="flex items-center gap-3 mt-2">
+                              <button 
+                                onClick={() => {
+                                  if (item.quantity > 1) {
+                                    setCart(cart.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity - 1 } : c));
+                                  }
+                                }}
+                                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
+                              >
+                                -
+                              </button>
+                              <span className="font-black text-sm w-4 text-center">{item.quantity}</span>
+                              <button 
+                                onClick={() => setCart(cart.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity + 1 } : c))}
+                                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
+                          <button 
+                            onClick={() => setCart(cart.filter(c => getCartItemId(c) !== cartId))}
+                            className="text-gray-300 hover:text-red-400 transition-colors p-2"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
                         </div>
-                        <button 
-                          onClick={() => setCart(cart.filter(c => String(c.product.id) !== String(item.product.id)))}
-                          className="text-gray-300 hover:text-red-400 transition-colors p-2"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
