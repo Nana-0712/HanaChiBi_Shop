@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Dancing+Script:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Dancing+Script:wght@700&family=Quicksand:wght@300;400;500;600;700&display=swap');
 
 @theme {
   --color-primary: #ffb7c5;
@@ -9,8 +9,9 @@
   --color-pastel-yellow: #fff4bd;
   --color-pastel-purple: #e2d1f9;
   --color-pastel-green: #c1f0c1;
-  --font-sans: "Quicksand", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
   --font-script: "Dancing Script", cursive;
+  --font-elegant: "Quicksand", sans-serif;
 }
 
 @layer base {
@@ -64,6 +65,10 @@
 
   .nav-link {
     @apply text-gray-600 font-bold hover:text-primary transition-colors duration-300 relative py-2;
+  }
+
+  .product-name-elegant {
+    @apply font-elegant tracking-tight font-bold;
   }
 }
 

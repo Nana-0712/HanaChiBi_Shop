@@ -1,9 +1,15 @@
+export interface ProductOption {
+  name: string; // e.g., "Màu sắc", "Kích thước"
+  values: string[]; // e.g., ["Hồng", "Xanh", "Vàng"]
+}
+
 export interface Product {
   id: number | string;
   name: string;
   price: number;
   originalPrice?: number;
   image: string;
+  images?: string[];
   category: string;
   subCategory?: string;
   brand?: string;
@@ -15,4 +21,8 @@ export interface Product {
   rating?: number;
   reviews?: number;
   description?: string;
+  details?: string;
+  options?: ProductOption[];
+  minQuantity?: number;
+  createdAt?: string; 
 }

@@ -3,7 +3,8 @@ import {
   ShoppingBag, Search, X, User, ChevronRight, Star,
   Sparkles, PenLine, BookOpen, Palette, Scissors, ArrowRight,
   Facebook, Instagram, Phone, Mail, MapPin, Eye, ShoppingCart,
-  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, AlertTriangle
+  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, AlertTriangle,
+  Home, ShieldCheck, Truck, RotateCcw, Minus, Plus, Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Product } from "./constants";
@@ -216,6 +217,11 @@ export default function App() {
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
   const [quickViewOptions, setQuickViewOptions] = useState<Record<string, string>>({});
+  const [quickViewQuantity, setQuickViewQuantity] = useState(1);
+  const [selectedQuickViewImage, setSelectedQuickViewImage] = useState<string | null>(null);
+  const [productPage, setProductPage] = useState<Product | null>(null);
+  const [productPageQuantity, setProductPageQuantity] = useState(1);
+  const [productPageOptions, setProductPageOptions] = useState<Record<string, string>>({});
   const [showCart, setShowCart] = useState(() => localStorage.getItem('hanachibi_show_cart') === 'true');
   const [showCheckout, setShowCheckout] = useState(() => localStorage.getItem('hanachibi_show_checkout') === 'true');
   const [showLogin, setShowLogin] = useState(false);
@@ -243,6 +249,7 @@ export default function App() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [customAlert, setCustomAlert] = useState<{message: string, type: 'success' | 'error' | 'info'} | null>(null);
   const [customConfirm, setCustomConfirm] = useState<{message: string, onConfirm: () => void} | null>(null);
+  const [directBuyItem, setDirectBuyItem] = useState<{product: Product, quantity: number, selectedOptions?: Record<string, string>} | null>(null);
 
   const showAlert = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setCustomAlert({ message, type });
@@ -531,9 +538,16 @@ export default function App() {
     }
     setOrderStatus('submitting');
     
-    const cartTotal = cart
-      .filter(item => selectedCartItems.includes(String(item.product.id)))
-      .reduce((acc, item) => acc + item.product.price * item.quantity, 0);
+    // Items to process - either the single direct-buy item or selected cart items
+    const itemsToOrder = directBuyItem ? [directBuyItem] : cart.filter(item => selectedCartItems.includes(getCartItemId(item)));
+
+    if (itemsToOrder.length === 0) {
+      showAlert("Vui lòng chọn ít nhất một sản phẩm để đặt hàng!", "error");
+      setOrderStatus('idle');
+      return;
+    }
+
+    const cartTotal = itemsToOrder.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
 
     const voucher = vouchers.find(v => v.code === customerInfo.voucher);
     const discount = voucher && cartTotal >= voucher.minOrder ? voucher.discount : 0;
@@ -541,13 +555,6 @@ export default function App() {
     const coinsUsed = customerInfo.useCoins ? Math.min(user?.coins || 0, cartTotal - discount + shipping) : 0;
     const finalTotal = cartTotal - discount + shipping - coinsUsed;
     const earnedCoins = Math.floor(cartTotal / 10000);
-
-    const itemsToOrder = cart.filter(item => selectedCartItems.includes(String(item.product.id)));
-    if (itemsToOrder.length === 0) {
-      showAlert("Vui lòng chọn ít nhất một sản phẩm để đặt hàng!", "error");
-      setOrderStatus('idle');
-      return;
-    }
 
     try {
       const orderData = {
@@ -572,8 +579,14 @@ export default function App() {
       });
 
       setOrderStatus('success');
-      setCart(prev => prev.filter(item => !selectedCartItems.includes(String(item.product.id))));
-      setSelectedCartItems([]);
+      
+      if (directBuyItem) {
+        setDirectBuyItem(null);
+      } else {
+        setCart(prev => prev.filter(item => !selectedCartItems.includes(String(item.product.id))));
+        setSelectedCartItems([]);
+      }
+
       setShowQR(false);
       showAlert("Đặt hàng thành công! HanaChiBi sẽ sớm liên hệ với bạn nhé 🌸", "success");
       setTimeout(() => {
@@ -662,31 +675,18 @@ export default function App() {
     setIsUploading(true);
     try {
       const imageUrl = await uploadImage(file, "products");
-      setEditingProduct(prev => prev ? { ...prev, image: imageUrl } : null);
+      setEditingProduct(prev => {
+        if (!prev) return null;
+        const images = prev.images || [];
+        return { 
+          ...prev, 
+          image: prev.image || imageUrl, // Set as main image if none exists
+          images: [...images, imageUrl] 
+        };
+      });
       showAlert("Tải ảnh sản phẩm thành công! ✨", "success");
     } catch (error: any) {
       handleFirestoreError(error, OperationType.WRITE, "products");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleCategoryImageUpload = async (e: ChangeEvent<HTMLInputElement>, type: 'image' | 'banner') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!auth.currentUser) {
-      showAlert("Vui lòng đăng nhập để tải ảnh lên!", "error");
-      return;
-    }
-
-    setIsUploading(true);
-    try {
-      const imageUrl = await uploadImage(file, "categories");
-      setEditingCategory((prev: any) => prev ? { ...prev, [type]: imageUrl } : null);
-      showAlert(`Tải ${type === 'image' ? 'ảnh' : 'banner'} danh mục thành công! ✨`, "success");
-    } catch (error: any) {
-      handleFirestoreError(error, OperationType.WRITE, "categories");
     } finally {
       setIsUploading(false);
     }
@@ -701,6 +701,11 @@ export default function App() {
     }
     try {
       const productData = { ...editingProduct };
+      // Ensure originalPrice can be null to clear it in Firestore
+      if (productData.originalPrice === undefined) {
+        productData.originalPrice = null as any;
+      }
+      
       if (productData.id) {
         const id = String(productData.id);
         delete productData.id;
@@ -816,32 +821,56 @@ export default function App() {
     return `${item.product.id}-${JSON.stringify(item.selectedOptions || {})}`;
   }, []);
 
-  const addToCart = (product: Product, options?: Record<string, string>) => {
-    const newItem = { product, quantity: 1, selectedOptions: options };
+  const handleBuyNow = (product: Product, options?: Record<string, string>, quantity: number = 1) => {
+    const minQty = product.minQuantity || 1;
+    if (quantity < minQty) {
+      showAlert(`Sản phẩm này cần mua tối thiểu ${minQty} cái nhé! 🌸`, "error");
+      return;
+    }
+    setDirectBuyItem({ product, quantity, selectedOptions: options });
+    if (!user) {
+      setShowLogin(true);
+    } else {
+      setShowCart(false);
+      setShowCheckout(true);
+    }
+  };
+
+  const addToCart = (product: Product, options?: Record<string, string>, quantity: number = 1) => {
+    const minQty = product.minQuantity || 1;
+    if (quantity < minQty) {
+      showAlert(`Sản phẩm này cần mua tối thiểu ${minQty} cái nhé! 🌸`, "error");
+      return;
+    }
+    const finalQty = quantity;
+    
+    const newItem = { product, quantity: finalQty, selectedOptions: options };
     const newItemId = getCartItemId(newItem);
     
     setCart(prev => {
       const existing = prev.find(item => getCartItemId(item) === newItemId);
       if (existing) {
-        return prev.map(item => getCartItemId(item) === newItemId ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => getCartItemId(item) === newItemId ? { ...item, quantity: item.quantity + finalQty } : item);
       }
       return [...prev, newItem];
     });
     
     setSelectedCartItems(prev => prev.includes(newItemId) ? prev : [...prev, newItemId]);
-    showAlert("Đã thêm vào giỏ hàng! ✨", "success");
+    showAlert(`Đã thêm ${finalQty} sản phẩm vào giỏ hàng! ✨`, "success");
   };
 
   const openQuickView = (product: Product) => {
     setQuickViewProduct(product);
     setQuickViewOptions({});
+    setQuickViewQuantity(product.minQuantity || 1);
+    setSelectedQuickViewImage(product.image);
   };
 
   const handleAddToCartClick = (product: Product) => {
     if (product.options && product.options.length > 0) {
       openQuickView(product);
     } else {
-      addToCart(product);
+      addToCart(product, undefined, product.minQuantity || 1);
     }
   };
 
@@ -877,9 +906,8 @@ export default function App() {
   }, [selectedCategory, bannerSlides.length]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
-  const cartTotal = cart
-    .filter(item => selectedCartItems.includes(String(item.product.id)))
-    .reduce((acc, item) => acc + item.product.price * item.quantity, 0);
+  const itemsToCheckout = directBuyItem ? [directBuyItem] : cart.filter(item => selectedCartItems.includes(getCartItemId(item)));
+  const cartTotal = itemsToCheckout.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
 
   const getIcon = (iconName: string) => {
     const props = { className: "w-5 h-5" };
@@ -1162,7 +1190,10 @@ export default function App() {
                       price: 0, 
                       category: firstCat?.id || "other", 
                       image: "https://picsum.photos/seed/new/600/600", 
+                      images: [],
                       description: "", 
+                      details: "",
+                      totalStock: 100,
                       rating: 5, 
                       reviews: 0 
                     });
@@ -1588,9 +1619,10 @@ export default function App() {
                             placeholder="Bút bi, Bút chì..."
                           />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Ảnh đại diện</label>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          {/* Item 1: Thumbnail/Icon */}
+                          <div className="space-y-4">
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Ảnh đại diện (Icon)</label>
                             <div className="flex gap-2">
                               <input 
                                 placeholder="Link ảnh..."
@@ -1606,36 +1638,36 @@ export default function App() {
                                 >
                                   {isUploading ? <Sparkles className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
                                 </button>
-                                {!isUploading && (
-                                  <input 
-                                    type="file" 
-                                    accept="image/*"
-                                    onChange={(e) => handleCategoryImageUpload(e, 'image')}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                  />
-                                )}
-                              </div>
-                            </div>
-                            <p className="text-[10px] text-gray-400 ml-2 italic">* Mẹo: Nên dùng link ảnh trực tiếp hoặc tải lên từ máy tính.</p>
-                            {editingCategory.image && (
-                              <div className="mt-2 aspect-square w-24 rounded-xl overflow-hidden border-2 border-primary-light/20 bg-gray-50">
-                                <img 
-                                  src={editingCategory.image} 
-                                  className="w-full h-full object-cover" 
-                                  referrerPolicy="no-referrer"
-                                  onError={(e) => {
-                                    const target = e.target as HTMLImageElement;
-                                    if (target.src !== "https://picsum.photos/seed/error/400/400") {
-                                      target.src = "https://picsum.photos/seed/error/400/400";
+                                <input 
+                                  type="file" 
+                                  accept="image/*"
+                                  disabled={isUploading}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      setIsUploading(true);
+                                      try {
+                                        const url = await uploadImage(file, 'categories');
+                                        setEditingCategory(prev => prev ? {...prev, image: url} : null);
+                                      } finally {
+                                        setIsUploading(false);
+                                      }
                                     }
                                   }}
+                                  className="absolute inset-0 opacity-0 cursor-pointer"
                                 />
+                              </div>
+                            </div>
+                            {editingCategory.image && (
+                              <div className="w-24 h-24 rounded-2xl overflow-hidden border-2 border-primary-light/20 bg-gray-50">
+                                <img src={cleanImageUrl(editingCategory.image)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               </div>
                             )}
                           </div>
 
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Ảnh Banner</label>
+                          {/* Item 2: Banner */}
+                          <div className="space-y-4">
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Banner danh mục</label>
                             <div className="flex gap-2">
                               <input 
                                 placeholder="Link banner..."
@@ -1651,30 +1683,29 @@ export default function App() {
                                 >
                                   {isUploading ? <Sparkles className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
                                 </button>
-                                {!isUploading && (
-                                  <input 
-                                    type="file" 
-                                    accept="image/*"
-                                    onChange={(e) => handleCategoryImageUpload(e, 'banner')}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                  />
-                                )}
-                              </div>
-                            </div>
-                            <p className="text-[10px] text-gray-400 ml-2 italic">* Mẹo: Banner nên có kích thước rộng để hiển thị đẹp nhất.</p>
-                            {editingCategory.banner && (
-                              <div className="mt-2 aspect-[3/1] w-full rounded-xl overflow-hidden border-2 border-primary-light/20 bg-gray-50">
-                                <img 
-                                  src={editingCategory.banner} 
-                                  className="w-full h-full object-cover" 
-                                  referrerPolicy="no-referrer"
-                                  onError={(e) => {
-                                    const target = e.target as HTMLImageElement;
-                                    if (target.src !== "https://picsum.photos/seed/error/400/400") {
-                                      target.src = "https://picsum.photos/seed/error/400/400";
+                                <input 
+                                  type="file" 
+                                  accept="image/*"
+                                  disabled={isUploading}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      setIsUploading(true);
+                                      try {
+                                        const url = await uploadImage(file, 'categories');
+                                        setEditingCategory(prev => prev ? {...prev, banner: url} : null);
+                                      } finally {
+                                        setIsUploading(false);
+                                      }
                                     }
                                   }}
+                                  className="absolute inset-0 opacity-0 cursor-pointer"
                                 />
+                              </div>
+                            </div>
+                            {editingCategory.banner && (
+                              <div className="w-full h-24 rounded-2xl overflow-hidden border-2 border-primary-light/20 bg-gray-50">
+                                <img src={cleanImageUrl(editingCategory.banner)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               </div>
                             )}
                           </div>
@@ -1727,14 +1758,60 @@ export default function App() {
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Giá gốc (nếu giảm)</label>
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Giá gốc (không bắt buộc)</label>
                             <input 
                               type="number"
                               value={editingProduct.originalPrice || ""}
-                              onChange={e => setEditingProduct({...editingProduct, originalPrice: parseInt(e.target.value) || undefined})}
+                              onChange={e => setEditingProduct({...editingProduct, originalPrice: e.target.value ? parseInt(e.target.value) : undefined})}
+                              placeholder="Để trống nếu không giảm giá"
                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
                             />
                           </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Số lượng trong kho</label>
+                            <input 
+                              type="number"
+                              value={editingProduct.totalStock || 0}
+                              onChange={e => setEditingProduct({...editingProduct, totalStock: parseInt(e.target.value)})}
+                              className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Đã bán (Giả lập nếu cần)</label>
+                             <input 
+                               type="number"
+                               value={editingProduct.soldCount || 0}
+                               onChange={e => setEditingProduct({...editingProduct, soldCount: parseInt(e.target.value)})}
+                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
+                             />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-6">
+                           <div className="space-y-2">
+                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mua tối thiểu (Default 1)</label>
+                             <input 
+                               type="number"
+                               min={1}
+                               value={editingProduct.minQuantity || 1}
+                               onChange={e => setEditingProduct({...editingProduct, minQuantity: parseInt(e.target.value) || 1})}
+                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
+                             />
+                           </div>
+                           <div className="space-y-2">
+                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Thương hiệu</label>
+                             <select 
+                               value={editingProduct.brand || ""}
+                               onChange={e => setEditingProduct({...editingProduct, brand: e.target.value})}
+                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none"
+                             >
+                               <option value="">Chọn thương hiệu</option>
+                               {["Thiên Long", "Flexoffice", "Điểm 10", "Colokit", "HanaChiBi"].map(brand => (
+                                 <option key={brand} value={brand}>{brand}</option>
+                               ))}
+                             </select>
+                           </div>
                         </div>
                         <div className="space-y-2">
                           <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Danh mục</label>
@@ -1763,19 +1840,6 @@ export default function App() {
                             {(!editingProduct.category || !categories.find(c => c.id === editingProduct.category)?.subCategories?.length) && (
                               <option value="" disabled>Vui lòng chọn danh mục trước</option>
                             )}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Thương hiệu</label>
-                          <select 
-                            value={editingProduct.brand || ""}
-                            onChange={e => setEditingProduct({...editingProduct, brand: e.target.value})}
-                            className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none"
-                          >
-                            <option value="">Chọn thương hiệu</option>
-                            {["Thiên Long", "Flexoffice", "Điểm 10", "Colokit", "HanaChiBi"].map(brand => (
-                              <option key={brand} value={brand}>{brand}</option>
-                            ))}
                           </select>
                         </div>
                         <div className="flex items-center gap-4 p-4 bg-primary-light/10 rounded-2xl">
@@ -1816,14 +1880,27 @@ export default function App() {
 
                       <div className="space-y-6">
                         <div className="space-y-4">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Hình ảnh sản phẩm</label>
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Hình ảnh sản phẩm (Nhiều ảnh)</label>
                           <div className="flex gap-4">
                             <input 
-                              required
-                              placeholder="Dán link ảnh vào đây..."
-                              value={editingProduct.image}
-                              onChange={e => setEditingProduct({...editingProduct, image: cleanImageUrl(e.target.value)})}
+                              placeholder="Dán link ảnh hoặc tải lên..."
                               className="flex-1 px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const target = e.target as HTMLInputElement;
+                                  if (target.value) {
+                                    const url = cleanImageUrl(target.value);
+                                    const currentImages = editingProduct.images || [];
+                                    setEditingProduct({
+                                      ...editingProduct,
+                                      image: editingProduct.image || url,
+                                      images: [...currentImages, url]
+                                    });
+                                    target.value = "";
+                                  }
+                                }
+                              }}
                             />
                              <div className="relative">
                                <button 
@@ -1831,12 +1908,8 @@ export default function App() {
                                  disabled={isUploading}
                                  className="h-full px-6 rounded-2xl bg-primary-light/20 text-primary-dark font-black hover:bg-primary-light transition-all flex items-center gap-2 disabled:opacity-50"
                                >
-                                 {isUploading ? (
-                                   <Sparkles className="w-5 h-5 animate-spin" />
-                                 ) : (
-                                   <Upload className="w-5 h-5" />
-                                 )}
-                                 {isUploading ? "Đang tải..." : "Tải lên"}
+                                 {isUploading ? <Sparkles className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+                                 {isUploading ? "..." : "Tải lên"}
                                </button>
                                {!isUploading && (
                                  <input 
@@ -1848,26 +1921,42 @@ export default function App() {
                                )}
                              </div>
                           </div>
-                          <p className="text-[10px] text-gray-400 ml-4 italic">* Mẹo: Chuột phải vào ảnh trên web và chọn "Sao chép địa chỉ hình ảnh" để lấy link chính xác nhất. ✨</p>
-                          {editingProduct.image && (
-                            <div className="mt-4 aspect-square rounded-2xl overflow-hidden border-2 border-primary-light relative bg-gray-50">
-                              <img 
-                                src={editingProduct.image} 
-                                className="w-full h-full object-cover" 
-                                referrerPolicy="no-referrer" 
-                                onError={(e) => {
-                                  const target = e.target as HTMLImageElement;
-                                  if (target.src !== "https://picsum.photos/seed/error/400/400") {
-                                    target.src = "https://picsum.photos/seed/error/400/400";
-                                    // Only show alert if the URL looks like a real attempt (has http and some length)
-                                    if (editingProduct.image.startsWith('http') && editingProduct.image.length > 15) {
-                                      showAlert("Link ảnh không hợp lệ hoặc bị chặn. Bạn hãy thử chuột phải vào ảnh và chọn 'Sao chép địa chỉ hình ảnh' nhé!", "error");
-                                    }
-                                  }
-                                }}
-                              />
-                            </div>
-                          )}
+                          
+                          <div className="grid grid-cols-4 gap-4 mt-6">
+                            {(editingProduct.images || []).map((img, idx) => (
+                              <div key={idx} className="relative aspect-square rounded-2xl overflow-hidden border-2 border-gray-100 group">
+                                <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                <button 
+                                  type="button"
+                                  onClick={() => {
+                                    const newImgs = (editingProduct.images || []).filter((_, i) => i !== idx);
+                                    setEditingProduct({
+                                      ...editingProduct,
+                                      images: newImgs,
+                                      image: editingProduct.image === img ? (newImgs[0] || "") : editingProduct.image
+                                    });
+                                  }}
+                                  className="absolute top-1 right-1 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={() => setEditingProduct({ ...editingProduct, image: img })}
+                                  className={`absolute bottom-1 left-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${editingProduct.image === img ? 'bg-primary-dark text-white' : 'bg-white/80 text-gray-500 opacity-0 group-hover:opacity-100'}`}
+                                >
+                                  {editingProduct.image === img ? "Ảnh chính" : "Làm ảnh chính"}
+                                </button>
+                              </div>
+                            ))}
+                            {!(editingProduct.images || []).length && editingProduct.image && (
+                               <div className="relative aspect-square rounded-2xl overflow-hidden border-2 border-primary-light group">
+                                 <img src={editingProduct.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                 <div className="absolute top-1 right-1 p-1 bg-primary-dark text-white rounded-lg text-[8px] font-black uppercase px-2">Legacy Only</div>
+                               </div>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-gray-400 ml-4 italic">* Bạn có thể thêm nhiều ảnh. Ảnh đầu tiên hoặc ảnh được chọn sẽ là ảnh đại diện. ✨</p>
                         </div>
                       </div>
                     </div>
@@ -1934,14 +2023,26 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mô tả sản phẩm</label>
-                      <textarea 
-                        required
-                        value={editingProduct.description}
-                        onChange={e => setEditingProduct({...editingProduct, description: e.target.value})}
-                        className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-32 resize-none"
-                      />
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mô tả ngắn</label>
+                        <textarea 
+                          required
+                          value={editingProduct.description}
+                          onChange={e => setEditingProduct({...editingProduct, description: e.target.value})}
+                          className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-24 resize-none"
+                          placeholder="Mô tả ngắn gọn về sản phẩm..."
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Chi tiết sản phẩm (Thông tin chi tiết)</label>
+                        <textarea 
+                          value={editingProduct.details || ""}
+                          onChange={e => setEditingProduct({...editingProduct, details: e.target.value})}
+                          className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-48 resize-none"
+                          placeholder="Thông số kỹ thuật, cách sử dụng, cam kết của shop..."
+                        />
+                      </div>
                     </div>
                     <div className="flex gap-4 pt-6">
                       <button type="button" onClick={() => {
@@ -1992,6 +2093,7 @@ export default function App() {
             {/* Logo Section */}
             <div className="flex items-center gap-4 cursor-pointer group shrink-0" onClick={() => {
               setSelectedCategory("all");
+              setProductPage(null);
               const now = Date.now();
               const lastClick = (window as any)._lastLogoClick || 0;
               const count = (window as any)._logoClickCount || 0;
@@ -2022,7 +2124,10 @@ export default function App() {
                   placeholder="Tìm kiếm sản phẩm..." 
                   className="bg-transparent border-none focus:outline-none text-sm w-full font-medium"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (e.target.value) setProductPage(null);
+                  }}
                   onFocus={() => setShowSearchTrends(true)}
                   onBlur={() => setTimeout(() => setShowSearchTrends(false), 200)}
                 />
@@ -2192,7 +2297,10 @@ export default function App() {
                     placeholder="Tìm kiếm sản phẩm..." 
                     className="w-full pl-12 pr-4 py-3 bg-gray-100 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary-light"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      if (e.target.value) setProductPage(null);
+                    }}
                     autoFocus
                   />
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -2203,17 +2311,38 @@ export default function App() {
 
           {/* Sub Nav */}
           <nav className="mt-4 border-t pt-4 flex items-center gap-4 overflow-x-auto no-scrollbar lg:gap-8">
+            <button 
+                onClick={() => {
+                  setSelectedCategory("all");
+                  setSelectedSubCategory("all");
+                  setProductPage(null);
+                }}
+                className={`text-sm font-black uppercase tracking-wider flex items-center gap-3 transition-colors shrink-0 ${selectedCategory === "all" && !productPage ? 'text-primary-dark' : 'text-gray-600 hover:text-primary'}`}
+              >
+                <div className="w-6 h-6 bg-primary-light/20 rounded-lg flex items-center justify-center text-primary-dark">
+                  <Home className="w-4 h-4" />
+                </div>
+                <span className="whitespace-nowrap">Trang chủ</span>
+            </button>
             {categories.map(cat => (
               <button 
                 key={cat.id} 
                 onClick={() => {
                   setSelectedCategory(cat.id);
                   setSelectedSubCategory("all");
+                  setProductPage(null);
                 }}
                 className={`text-sm font-black uppercase tracking-wider flex items-center gap-3 transition-colors shrink-0 ${selectedCategory === cat.id ? 'text-primary-dark' : 'text-gray-600 hover:text-primary'}`}
               >
                 {cat.image ? (
-                  <img src={cat.image} className="w-6 h-6 rounded-lg object-cover border border-gray-100" referrerPolicy="no-referrer" />
+                  <img 
+                    src={cleanImageUrl(cat.image)} 
+                    className="w-6 h-6 rounded-lg object-cover border border-gray-100" 
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi/200/200";
+                    }}
+                  />
                 ) : (
                   getIcon(cat.icon)
                 )}
@@ -2236,7 +2365,13 @@ export default function App() {
           {selectedSubCategory !== "all" && (
             <>
               <ChevronRight className="w-3 h-3" />
-              <span className="text-primary-dark">{selectedSubCategory}</span>
+              <span className="hover:text-primary-dark cursor-pointer" onClick={() => setProductPage(null)}>{selectedSubCategory}</span>
+            </>
+          )}
+          {productPage && (
+            <>
+              <ChevronRight className="w-3 h-3" />
+              <span className="text-primary-dark line-clamp-1">{productPage.name}</span>
             </>
           )}
         </div>
@@ -2244,131 +2379,372 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-grow">
-        {/* Hero Slider Section (Moving Banner) - Only shown when logged in */}
-        {user && selectedCategory === "all" && !searchQuery && (
-          <section className="relative h-[400px] md:h-[600px] overflow-hidden bg-gray-50">
-            {bannerSlides.length > 0 ? (
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={safeCurrentSlide}
-                  initial={{ opacity: 0, x: 100 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -100 }}
-                  transition={{ duration: 0.8, ease: "easeInOut" }}
-                  className="absolute inset-0"
-                >
-                  <div className="relative w-full h-full">
-                    <img 
-                      src={cleanImageUrl(bannerSlides[safeCurrentSlide]?.banner || `https://picsum.photos/seed/${bannerSlides[safeCurrentSlide]?.id}-hero/1920/800`)} 
-                      alt={bannerSlides[safeCurrentSlide]?.name}
-                      className="w-full h-full object-cover object-center"
+        {productPage ? (
+          <section className="py-12 bg-white">
+            <div className="max-w-[1400px] mx-auto px-6">
+              <button 
+                onClick={() => setProductPage(null)}
+                className="flex items-center gap-2 text-gray-500 hover:text-primary-dark font-bold mb-8 transition-colors group"
+              >
+                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-primary-light transition-colors">
+                  <ChevronRight className="w-4 h-4 rotate-180" />
+                </div>
+                Quay lại
+              </button>
+
+              <div className="flex flex-col lg:flex-row gap-12">
+                {/* Image Gallery Column */}
+                <div className="lg:w-1/2 space-y-6">
+                  <div className="aspect-square rounded-[3rem] overflow-hidden bg-gray-50 border-2 border-gray-50 shadow-sm relative group">
+                    <motion.img 
+                      key={selectedQuickViewImage || productPage.image}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      src={cleanImageUrl(selectedQuickViewImage || productPage.image)} 
+                      alt={productPage.name} 
+                      className="w-full h-full object-contain p-8"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${bannerSlides[safeCurrentSlide]?.id}-hero/1920/800`;
+                        (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi-detail/800/800";
                       }}
                     />
-                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                      <div className="text-center px-4">
-                        <motion.div
-                          initial={{ y: 30, opacity: 0 }}
-                          animate={{ y: 0, opacity: 1 }}
-                          transition={{ delay: 0.3 }}
-                        >
-                          <h2 className="text-5xl md:text-8xl font-black text-white mb-6 uppercase tracking-tighter italic drop-shadow-2xl">
-                            {bannerSlides[safeCurrentSlide]?.name}
-                          </h2>
-                          <button 
-                            onClick={() => setSelectedCategory(bannerSlides[safeCurrentSlide]?.id)}
-                            className="px-12 py-4 bg-white text-gray-900 rounded-full font-black text-sm uppercase tracking-widest hover:bg-primary-light hover:text-primary-dark transition-all shadow-2xl hover:scale-110 active:scale-95"
-                          >
-                            Khám phá ngay
-                          </button>
-                        </motion.div>
-                      </div>
+                    
+                    <div className="absolute top-6 left-6 flex flex-col gap-3">
+                      {productPage.isFlashSale && (
+                        <span className="bg-red-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl flex items-center gap-2">
+                          <Zap className="w-3 h-3 fill-current" /> Đang Sale
+                        </span>
+                      )}
+                      {productPage.isNew && (
+                        <span className="bg-primary-dark text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl">Hàng Mới</span>
+                      )}
                     </div>
                   </div>
-                </motion.div>
-              </AnimatePresence>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                <div className="text-center">
-                  <Sparkles className="w-12 h-12 text-primary-dark mx-auto mb-4 animate-bounce" />
-                  <p className="text-gray-400 font-black uppercase tracking-widest">Đang tải banner... 🐾</p>
+
+                  {/* Thumbnails */}
+                  {(productPage.images && productPage.images.length > 0) && (
+                    <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
+                      {[productPage.image, ...productPage.images.filter(img => img !== productPage.image)].map((img, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={() => setSelectedQuickViewImage(img)}
+                          className={`w-24 h-24 rounded-2xl overflow-hidden border-2 flex-shrink-0 transition-all ${selectedQuickViewImage === img ? 'border-primary-dark shadow-lg scale-105' : 'border-gray-100 hover:border-primary-light'}`}
+                        >
+                          <img src={cleanImageUrl(img)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Trust Badges */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-8">
+                    {[
+                      { icon: ShieldCheck, text: "Chính hãng 100%", sub: "Cam kết chất lượng" },
+                      { icon: Truck, text: "Giao hàng nhanh", sub: "Khắp cả nước" },
+                      { icon: RotateCcw, text: "Đổi trả dễ dàng", sub: "Trong 7 ngày" }
+                    ].map((badge, i) => (
+                      <div key={i} className="flex flex-col items-center text-center p-4 bg-gray-50 rounded-[2rem] border border-gray-100">
+                        <badge.icon className="w-6 h-6 text-primary-dark mb-2" />
+                        <span className="text-[10px] font-black text-gray-900 uppercase tracking-tighter mb-1">{badge.text}</span>
+                        <span className="text-[8px] font-bold text-gray-400">{badge.sub}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Info Column */}
+                <div className="lg:w-1/2 flex flex-col">
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="px-3 py-1 bg-primary-light/30 text-primary-dark text-[10px] font-black uppercase tracking-widest rounded-lg">
+                      {categories.find(c => c.id === productPage.category)?.name}
+                    </span>
+                    <span className="text-gray-400 font-bold text-xs">Thương hiệu: <span className="text-gray-900">{productPage.brand || "HanaChiBi"}</span></span>
+                  </div>
+
+                  <h1 className="text-3xl md:text-5xl text-gray-900 mb-6 leading-[1.1] product-name-elegant">{productPage.name}</h1>
+                  
+                  <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
+                    <div className="flex items-center gap-1">
+                      {[1,2,3,4,5].map(s => <Star key={s} className="w-4 h-4 fill-yellow-400 text-yellow-400" />)}
+                      <span className="text-sm font-bold text-gray-400 ml-2">4.9 (128 đánh giá)</span>
+                    </div>
+                    <div className="h-4 w-[1px] bg-gray-200" />
+                    <span className="text-sm font-bold text-gray-400">Đã bán: <span className="text-gray-900 font-black">{productPage.soldCount || 0}</span></span>
+                  </div>
+
+                  <div className="bg-gray-50 rounded-[2.5rem] p-8 mb-8 border border-gray-100">
+                    <div className="flex items-baseline gap-4 mb-4">
+                      <span className="text-5xl font-black text-primary-dark tracking-tighter">
+                        {(productPage.price * productPageQuantity).toLocaleString('vi-VN')}đ
+                      </span>
+                      {productPage.originalPrice && (
+                        <span className="text-xl text-gray-300 line-through font-bold">
+                          {productPage.originalPrice.toLocaleString('vi-VN')}đ
+                        </span>
+                      )}
+                      {productPage.originalPrice && (
+                        <span className="bg-red-500 text-white text-[10px] font-black px-2 py-1 rounded-md mb-2">
+                          -{Math.round((1 - productPage.price / productPage.originalPrice) * 100)}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs font-bold text-green-600 bg-green-50 px-4 py-2 rounded-xl border border-green-100 w-fit">
+                      <Zap className="w-4 h-4 fill-current" /> Tiết kiệm tới {(productPage.originalPrice || 0) - productPage.price > 0 ? ((productPage.originalPrice || 0) - productPage.price).toLocaleString('vi-VN') + 'đ' : 'cho bạn'}!
+                    </div>
+                  </div>
+
+                  {/* Options */}
+                  {productPage.options && productPage.options.length > 0 && (
+                    <div className="space-y-6 mb-8">
+                      {productPage.options.map(opt => (
+                        <div key={opt.name} className="space-y-3">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest block ml-2">Chọn {opt.name}</label>
+                          <div className="flex flex-wrap gap-2">
+                            {opt.values.map(val => (
+                              <button 
+                                key={val}
+                                onClick={() => setProductPageOptions(prev => ({...prev, [opt.name]: val}))}
+                                className={`px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 ${productPageOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark shadow-xl scale-105' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light hover:bg-primary-light/10'}`}
+                              >
+                                {val}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Quantity and Actions */}
+                  <div className="space-y-6 bg-white p-8 rounded-[3rem] border-2 border-gray-50 shadow-sm mb-8">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2 italic">Số lượng cần mua</label>
+                        <div className="flex items-center bg-gray-50 rounded-2xl p-1 border border-gray-100">
+                          <button 
+                            onClick={() => setProductPageQuantity(q => Math.max(productPage.minQuantity || 1, q - 1))}
+                            className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
+                          >
+                            <Minus className="w-5 h-5" />
+                          </button>
+                          <input 
+                            type="number"
+                            value={productPageQuantity}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value);
+                              if (!isNaN(v)) setProductPageQuantity(Math.max(productPage.minQuantity || 1, v));
+                            }}
+                            className="w-16 text-center bg-transparent font-black text-xl focus:outline-none"
+                          />
+                          <button 
+                            onClick={() => setProductPageQuantity(q => q + 1)}
+                            className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
+                          >
+                            <Plus className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {productPage.minQuantity && productPage.minQuantity > 1 && (
+                        <div className="flex items-center gap-3 px-6 py-4 bg-primary-light/20 rounded-[2rem] border border-primary-light/50">
+                          <Info className="w-5 h-5 text-primary-dark" />
+                          <p className="text-xs font-black text-primary-dark uppercase italic leading-tight">
+                            Sản phẩm này yêu cầu <br /> mua tối thiểu {productPage.minQuantity} cái
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <button 
+                         onClick={() => {
+                           if (productPage.options?.some(opt => !productPageOptions[opt.name])) {
+                             showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                             return;
+                           }
+                           addToCart(productPage, productPageOptions, productPageQuantity);
+                         }}
+                         className="flex-grow py-5 bg-white border-2 border-primary-dark text-primary-dark rounded-[2rem] font-black uppercase tracking-widest hover:bg-primary-light/20 transition-all flex items-center justify-center gap-3 active:scale-95 shadow-sm"
+                      >
+                        <ShoppingBag className="w-5 h-5" /> Thêm vào giỏ
+                      </button>
+                      <button 
+                         onClick={() => {
+                           if (productPage.options?.some(opt => !productPageOptions[opt.name])) {
+                             showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                             return;
+                           }
+                           handleBuyNow(productPage, productPageOptions, productPageQuantity);
+                         }}
+                         className="flex-grow py-5 bg-primary-dark text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl active:scale-95"
+                      >
+                        Mua ngay ✨
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tabs / Info Sections */}
+                  <div className="space-y-8">
+                    <div className="border-b border-gray-100 flex gap-8 overflow-x-auto no-scrollbar">
+                      {["Mô tả", "Chi tiết", "Đánh giá"].map(tab => (
+                        <button key={tab} className={`pb-4 text-sm font-black uppercase tracking-widest border-b-4 transition-all ${tab === "Mô tả" ? "border-primary-dark text-primary-dark" : "border-transparent text-gray-400"}`}>
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="space-y-6">
+                      <p className="text-gray-500 font-medium leading-relaxed">
+                        {productPage.description}
+                      </p>
+                      
+                      {productPage.details && (
+                        <div className="bg-gray-50 rounded-[2.5rem] p-8 border border-gray-100">
+                          <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-4">Thông tin kỹ thuật</h4>
+                          <div className="text-sm text-gray-500 whitespace-pre-wrap leading-relaxed font-bold">
+                            {productPage.details}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
+          </section>
+        ) : (
+          <>
+            {/* Hero Slider Section (Moving Banner) - Only shown when logged in */}
+        {user && selectedCategory === "all" && !searchQuery && (
+          <section className="relative overflow-hidden bg-white">
+            <div className="relative h-[400px] md:h-[600px]">
+              <div className="w-full h-full overflow-hidden relative bg-gray-50">
+                {bannerSlides.length > 0 ? (
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={safeCurrentSlide}
+                      initial={{ opacity: 0, x: 100 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -100 }}
+                      transition={{ duration: 0.8, ease: "easeInOut" }}
+                      className="absolute inset-0"
+                    >
+                      <div className="relative w-full h-full">
+                        <img 
+                          src={cleanImageUrl(bannerSlides[safeCurrentSlide]?.banner || bannerSlides[safeCurrentSlide]?.image || `https://picsum.photos/seed/${bannerSlides[safeCurrentSlide]?.id}-hero/1920/800`)} 
+                          alt={bannerSlides[safeCurrentSlide]?.name}
+                          className="w-full h-full object-cover object-center"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${bannerSlides[safeCurrentSlide]?.id}-hero/1920/800`;
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                          <div className="text-center px-4">
+                            <motion.div
+                              initial={{ y: 30, opacity: 0 }}
+                              animate={{ y: 0, opacity: 1 }}
+                              transition={{ delay: 0.3 }}
+                            >
+                              <h2 className="text-4xl md:text-7xl font-black text-white mb-6 uppercase tracking-tighter italic drop-shadow-2xl">
+                                {bannerSlides[safeCurrentSlide]?.name}
+                              </h2>
+                              <button 
+                                onClick={() => setSelectedCategory(bannerSlides[safeCurrentSlide]?.id)}
+                                className="px-10 py-3.5 bg-white text-gray-900 rounded-full font-black text-xs md:text-sm uppercase tracking-widest hover:bg-primary-light hover:text-primary-dark transition-all shadow-2xl hover:scale-110 active:scale-95"
+                              >
+                                Khám phá ngay
+                              </button>
+                            </motion.div>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                    <div className="text-center">
+                      <Sparkles className="w-12 h-12 text-primary-dark mx-auto mb-4 animate-bounce" />
+                      <p className="text-gray-400 font-black uppercase tracking-widest">Đang tải banner... 🐾</p>
+                    </div>
+                  </div>
+                )}
 
-            {bannerSlides.length > 1 && (
-              <>
-                {/* Slider Indicators */}
-                <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-3 z-20">
-                  {bannerSlides.map((_, index) => (
-                    <button
-                      key={index}
-                      onClick={() => setCurrentSlide(index)}
-                      className={`h-2 rounded-full transition-all duration-500 ${safeCurrentSlide === index ? 'w-12 bg-white' : 'w-2 bg-white/50 hover:bg-white/80'}`}
-                    />
-                  ))}
-                </div>
+                {bannerSlides.length > 1 && (
+                  <>
+                    {/* Slider Indicators */}
+                    <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-3 z-20">
+                      {bannerSlides.map((_, index) => (
+                        <button
+                          key={index}
+                          onClick={() => setCurrentSlide(index)}
+                          className={`h-2 rounded-full transition-all duration-500 ${safeCurrentSlide === index ? 'w-12 bg-white' : 'w-2 bg-white/50 hover:bg-white/80'}`}
+                        />
+                      ))}
+                    </div>
 
-                {/* Navigation Arrows */}
-                <button 
-                  onClick={() => setCurrentSlide((prev) => (prev - 1 + bannerSlides.length) % bannerSlides.length)}
-                  className="absolute left-6 top-1/2 -translate-y-1/2 w-14 h-14 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-20 border border-white/30"
-                >
-                  <ChevronRight className="w-8 h-8 rotate-180" />
-                </button>
-                <button 
-                  onClick={() => setCurrentSlide((prev) => (prev + 1) % bannerSlides.length)}
-                  className="absolute right-6 top-1/2 -translate-y-1/2 w-14 h-14 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-20 border border-white/30"
-                >
-                  <ChevronRight className="w-8 h-8" />
-                </button>
-              </>
-            )}
+                    {/* Navigation Arrows */}
+                    <button 
+                      onClick={() => setCurrentSlide((prev) => (prev - 1 + bannerSlides.length) % bannerSlides.length)}
+                      className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-20 border border-white/30"
+                    >
+                      <ChevronRight className="w-6 h-6 rotate-180" />
+                    </button>
+                    <button 
+                      onClick={() => setCurrentSlide((prev) => (prev + 1) % bannerSlides.length)}
+                      className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-20 border border-white/30"
+                    >
+                      <ChevronRight className="w-6 h-6" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </section>
         )}
 
         {/* Welcome Section (Static Banner - only shown when not logged in and no search) */}
         {!user && selectedCategory === "all" && !searchQuery && (
-          <section className="relative h-[400px] md:h-[600px] overflow-hidden bg-gray-50 border-t border-gray-100">
-            <div className="relative w-full h-full">
-              <img 
-                src={cleanImageUrl(settings.loginBanner)} 
-                alt="HanaChiBi Banner" 
-                className="w-full h-full object-cover object-center"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi-main/1000/800";
-                }}
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-white/90 via-white/40 to-transparent flex items-center">
-                <div className="w-full max-w-[1800px] mx-auto px-8 md:px-16 lg:px-20">
-                  <motion.div
-                    initial={{ x: -30, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                    className="text-left max-w-4xl"
-                  >
-                    <div className="mb-8">
-                      <h2 className="text-5xl md:text-7xl font-black text-[#c5b4e3] leading-[1.1] tracking-tight drop-shadow-sm whitespace-pre-wrap max-w-2xl">
-                        {settings.loginBannerText || "Cùng HanaChiBi viết nên ước mơ"}
-                      </h2>
-                    </div>
-                    
-                    <p className="text-gray-500 font-semibold text-lg md:text-xl mb-10 max-w-xl leading-relaxed opacity-80">
-                      Khám phá bộ sưu tập văn phòng phẩm pastel ngọt <br className="hidden md:block" />
-                      ngào, chất lượng vượt trội dành riêng cho các bạn học <br className="hidden md:block" />
-                      sinh, sinh viên.
-                    </p>
-
-                    <button 
-                      onClick={() => setShowLogin(true)}
-                      className="px-14 py-5 bg-[#ffb7c5] text-white rounded-full font-black text-lg uppercase tracking-widest hover:bg-[#ff8fa3] transition-all hover:scale-105 active:scale-95 shadow-xl shadow-pink-200/50 flex items-center gap-2"
+          <section className="relative overflow-hidden bg-white">
+            <div className="relative h-[400px] md:h-[600px]">
+              <div className="w-full h-full overflow-hidden relative">
+                <img 
+                  src={cleanImageUrl(settings.loginBanner)} 
+                  alt="HanaChiBi Banner" 
+                  className="w-full h-full object-cover object-center"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi-main/1000/800";
+                  }}
+                />
+                <div className="absolute inset-0 bg-gradient-to-r from-white/95 via-white/50 to-transparent flex items-center">
+                  <div className="w-full px-8 md:px-16 lg:px-20">
+                    <motion.div
+                      initial={{ x: -30, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ delay: 0.3 }}
+                      className="text-left max-w-4xl"
                     >
-                      KHÁM PHÁ NGAY ✨
-                    </button>
-                  </motion.div>
+                      <div className="mb-8">
+                        <h2 className="text-4xl md:text-6xl font-black text-[#c5b4e3] leading-[1.1] tracking-tight drop-shadow-sm whitespace-pre-wrap max-w-xl">
+                          {settings.loginBannerText || "Cùng HanaChiBi viết nên ước mơ"}
+                        </h2>
+                      </div>
+                      
+                      <p className="text-gray-500 font-semibold text-base md:text-lg mb-10 max-w-md leading-relaxed opacity-80">
+                        Khám phá bộ sưu tập văn phòng phẩm pastel ngọt <br className="hidden md:block" />
+                        ngào, chất lượng vượt trội dành riêng cho các bạn học <br className="hidden md:block" />
+                        sinh, sinh viên.
+                      </p>
+
+                      <button 
+                        onClick={() => setShowLogin(true)}
+                        className="px-12 py-4.5 bg-[#ffb7c5] text-white rounded-full font-black text-base uppercase tracking-widest hover:bg-[#ff8fa3] transition-all hover:scale-105 active:scale-95 shadow-xl shadow-pink-200/50 flex items-center gap-2"
+                      >
+                        KHÁM PHÁ NGAY ✨
+                      </button>
+                    </motion.div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2414,7 +2790,15 @@ export default function App() {
                         </div>
                       )}
                       <div className="aspect-square rounded-[2rem] overflow-hidden mb-6 bg-gray-50 relative">
-                        <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" referrerPolicy="no-referrer" />
+                        <img 
+                          src={cleanImageUrl(product.image)} 
+                          alt={product.name} 
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = "https://picsum.photos/seed/placeholder-prod/600/600";
+                          }}
+                        />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                           <button 
                             onClick={() => openQuickView(product)}
@@ -2489,10 +2873,13 @@ export default function App() {
                         {/* Category Banner - Framed like Flash Sale */}
                         <div className="relative h-[250px] md:h-[450px] rounded-[2rem] overflow-hidden group shadow-lg">
                           <img 
-                            src={cleanImageUrl(category.banner || `https://picsum.photos/seed/${category.id}-banner/1200/400`)} 
+                            src={cleanImageUrl(category.banner || category.image || `https://picsum.photos/seed/${category.id}-banner/1200/400`)} 
                             alt={category.name} 
                             className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-1000"
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${category.id}-banner/1200/400`;
+                            }}
                           />
                           <div className="absolute inset-0 bg-black/20 flex items-center justify-center px-6">
                             <div className="text-center">
@@ -2549,6 +2936,9 @@ export default function App() {
                                     alt={product.name} 
                                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
                                     referrerPolicy="no-referrer"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = "https://picsum.photos/seed/placeholder-prod/600/600";
+                                    }}
                                   />
                                 </div>
                                 <h4 className="font-bold text-gray-800 mb-1 line-clamp-1 text-xs group-hover:text-primary-dark transition-colors">{product.name}</h4>
@@ -2649,6 +3039,29 @@ export default function App() {
 
               {/* Main Products Area */}
               <div className="flex-grow">
+                {selectedCategory !== "all" && !searchQuery && categories.find(c => c.id === selectedCategory) && (
+                  <div className="relative h-[200px] md:h-[350px] rounded-[3rem] overflow-hidden mb-12 shadow-xl border-2 border-primary-light/10">
+                    <img 
+                      src={cleanImageUrl(categories.find(c => c.id === selectedCategory)?.banner || categories.find(c => c.id === selectedCategory)?.image || `https://picsum.photos/seed/${selectedCategory}-header/1200/400`)} 
+                      alt={categories.find(c => c.id === selectedCategory)?.name} 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${selectedCategory}-header/1200/400`;
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-8 md:p-12">
+                      <h2 className="text-3xl md:text-5xl font-black text-white uppercase italic tracking-tight drop-shadow-lg">
+                        {categories.find(c => c.id === selectedCategory)?.name}
+                      </h2>
+                      {selectedSubCategory !== "all" && (
+                        <p className="text-white/80 font-black text-sm md:text-lg uppercase tracking-widest mt-2 flex items-center gap-2">
+                           <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-primary-light" /> {selectedSubCategory}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
                   <h3 className="text-3xl font-black text-gray-900 uppercase italic">
                     {searchQuery ? `Kết quả tìm kiếm cho: "${searchQuery}"` : (categories.find(c => c.id === selectedCategory)?.name || "Danh mục")}
@@ -2688,28 +3101,43 @@ export default function App() {
                         )}
                       </div>
 
-                      <div className="relative aspect-square rounded-[2rem] overflow-hidden mb-6 bg-gray-50">
+                      <div 
+                        className="relative aspect-square rounded-[2rem] overflow-hidden mb-6 bg-gray-50 cursor-pointer group/img"
+                        onClick={() => {
+                          setProductPage(product);
+                          setProductPageQuantity(product.minQuantity || 1);
+                          setProductPageOptions({});
+                          setSelectedQuickViewImage(product.image);
+                          window.scrollTo(0, 0);
+                        }}
+                      >
                         <img 
-                          src={cleanImageUrl(product.image)} 
+                          src={cleanImageUrl(product.image) || "https://picsum.photos/seed/pink-panther/400/400"} 
                           alt={product.name} 
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                          className="w-full h-full object-cover group-hover/img:scale-110 transition-transform duration-700" 
                           referrerPolicy="no-referrer"
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            if (target.src !== "https://picsum.photos/seed/product/400/400") {
-                              target.src = "https://picsum.photos/seed/product/400/400";
+                            if (!target.src.includes("pink-panther")) {
+                              target.src = "https://picsum.photos/seed/pink-panther/400/400";
                             }
                           }}
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-3">
                           <button 
-                            onClick={() => openQuickView(product)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openQuickView(product);
+                            }}
                             className="w-12 h-12 bg-white text-gray-900 rounded-2xl flex items-center justify-center hover:scale-110 transition-transform shadow-xl"
                           >
                             <Eye className="w-6 h-6" />
                           </button>
                           <button 
-                            onClick={() => handleAddToCartClick(product)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddToCartClick(product);
+                            }}
                             className="w-12 h-12 bg-primary-dark text-white rounded-2xl flex items-center justify-center hover:scale-110 transition-transform shadow-xl"
                           >
                             <ShoppingCart className="w-6 h-6" />
@@ -2724,7 +3152,18 @@ export default function App() {
                           </span>
                           <span className="text-[10px] font-bold text-gray-400 capitalize">{product.brand}</span>
                         </div>
-                        <h4 className="font-black text-gray-900 mb-2 line-clamp-2 text-sm group-hover:text-primary-dark transition-colors">{product.name}</h4>
+                        <h4 
+                          className="product-name-elegant text-gray-900 mb-1 line-clamp-2 text-base hover:text-primary-dark transition-colors cursor-pointer"
+                          onClick={() => {
+                            setProductPage(product);
+                            setProductPageQuantity(product.minQuantity || 1);
+                            setProductPageOptions({});
+                            setSelectedQuickViewImage(product.image);
+                            window.scrollTo(0, 0);
+                          }}
+                        >
+                          {product.name}
+                        </h4>
                         
                         <div className="flex items-center gap-1 mb-4">
                           {[1, 2, 3, 4, 5].map((s) => (
@@ -2736,22 +3175,16 @@ export default function App() {
 
                       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
                         <div className="flex flex-col">
-                          {(product.originalPrice || product.isFlashSale) && (
+                          {product.originalPrice && (
                             <span className="text-xs text-gray-400 line-through font-bold">
-                              {(product.originalPrice || Math.round((product.price * 1.2) / 1000) * 1000).toLocaleString('vi-VN')}đ
+                              {product.originalPrice.toLocaleString('vi-VN')}đ
                             </span>
                           )}
                           <span className="text-xl font-black text-primary-dark tracking-tighter">{product.price.toLocaleString('vi-VN')}đ</span>
                         </div>
                         <button 
                           onClick={() => {
-                            handleAddToCartClick(product);
-                            if (!user) {
-                              showAlert("Opps! Bạn cần đăng nhập để có thể đặt hàng nhé 🌸", "info");
-                              setShowLogin(true);
-                              return;
-                            }
-                            setShowCheckout(true);
+                            handleBuyNow(product, undefined, product.minQuantity || 1);
                           }}
                           className="bg-primary-dark text-white px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95"
                         >
@@ -2834,7 +3267,9 @@ export default function App() {
             </div>
           </div>
         </section>
-      </main>
+      </>
+    )}
+  </main>
 
       {/* Login Modal */}
       <AnimatePresence>
@@ -3135,22 +3570,55 @@ export default function App() {
               <button onClick={() => setQuickViewProduct(null)} className="absolute top-6 right-6 z-20 p-2 bg-gray-100 rounded-full hover:bg-primary hover:text-white transition-all">
                 <X className="w-6 h-6" />
               </button>
-              <div className="md:w-1/2 bg-gray-50">
-                <img src={cleanImageUrl(quickViewProduct.image)} alt={quickViewProduct.name} className="w-full h-full object-cover" />
+              <div className="md:w-1/2 bg-gray-50 flex flex-col">
+                <div className="flex-grow relative overflow-hidden bg-white flex items-center justify-center min-h-[300px]">
+                  <img src={cleanImageUrl(selectedQuickViewImage || quickViewProduct.image)} alt={quickViewProduct.name} className="max-w-full max-h-full object-contain" />
+                </div>
+                {quickViewProduct.images && quickViewProduct.images.length > 0 && (
+                  <div className="flex gap-2 p-4 bg-gray-50/50 backdrop-blur-sm overflow-x-auto custom-scrollbar border-t border-gray-100">
+                     {[quickViewProduct.image, ...quickViewProduct.images.filter(img => img !== quickViewProduct.image)].map((img, idx) => (
+                       <button 
+                         key={idx}
+                         onClick={() => setSelectedQuickViewImage(img)}
+                         className={`w-16 h-16 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${selectedQuickViewImage === img ? 'border-primary-dark shadow-md scale-105' : 'border-transparent hover:border-primary-light'}`}
+                       >
+                         <img src={cleanImageUrl(img)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                       </button>
+                     ))}
+                  </div>
+                )}
               </div>
-              <div className="md:w-1/2 p-10 flex flex-col">
-                <span className="text-primary-dark font-black uppercase text-xs tracking-widest mb-4">
-                  {categories.find(c => c.id === quickViewProduct.category)?.name}
-                </span>
-                <h3 className="text-3xl font-black text-gray-900 mb-4">{quickViewProduct.name}</h3>
+              <div className="md:w-1/2 p-10 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-primary-dark font-black uppercase text-xs tracking-widest">
+                    {categories.find(c => c.id === quickViewProduct.category)?.name}
+                  </span>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-tighter text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
+                       <Zap className="w-3 h-3 fill-gray-400" /> Còn {quickViewProduct.totalStock || 0}
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-tighter text-primary-dark bg-primary-light/20 px-3 py-1 rounded-full">
+                       <Sparkles className="w-3 h-3 fill-primary-dark" /> Đã bán {quickViewProduct.soldCount || 0}
+                    </div>
+                  </div>
+                </div>
+                <h3 className="text-2xl text-gray-900 mb-4 leading-tight product-name-elegant">{quickViewProduct.name}</h3>
                 <div className="flex items-center gap-2 mb-6">
                   <div className="flex">
                     {[...Array(5)].map((_, i) => <Star key={i} className="w-4 h-4 fill-pastel-yellow text-pastel-yellow" />)}
                   </div>
                   <span className="text-sm text-gray-400 font-bold">{quickViewProduct.reviews} đánh giá</span>
                 </div>
-                <div className="text-3xl font-black text-primary-dark mb-8">
-                  {quickViewProduct.price.toLocaleString('vi-VN')}đ
+                
+                <div className="flex items-baseline gap-4 mb-8">
+                  <div className="text-4xl font-black text-primary-dark">
+                    {(quickViewProduct.price * quickViewQuantity).toLocaleString('vi-VN')}đ
+                  </div>
+                  {quickViewProduct.originalPrice && (
+                    <div className="text-lg font-bold text-gray-300 line-through">
+                      {quickViewProduct.originalPrice.toLocaleString('vi-VN')}đ
+                    </div>
+                  )}
                 </div>
 
                 {quickViewProduct.options && quickViewProduct.options.length > 0 && (
@@ -3174,9 +3642,57 @@ export default function App() {
                   </div>
                 )}
 
-                <p className="text-gray-500 mb-10 leading-relaxed font-medium">
-                  {quickViewProduct.description}
-                </p>
+                 <div className="space-y-6 mb-10">
+                    {/* Quantity Selector */}
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Số lượng</label>
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center bg-gray-100 rounded-2xl p-1">
+                          <button 
+                            onClick={() => setQuickViewQuantity(q => Math.max(quickViewProduct.minQuantity || 1, q - 1))}
+                            className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-primary-dark transition-colors"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <input 
+                            type="number"
+                            value={quickViewQuantity}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              if (!isNaN(val)) setQuickViewQuantity(Math.max(quickViewProduct.minQuantity || 1, val));
+                            }}
+                            className="w-12 text-center bg-transparent font-black text-lg focus:outline-none"
+                          />
+                          <button 
+                            onClick={() => setQuickViewQuantity(q => q + 1)}
+                            className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-primary-dark transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                        {quickViewProduct.minQuantity && quickViewProduct.minQuantity > 1 && (
+                          <span className="text-[10px] text-primary-dark font-black px-3 py-1 bg-primary-light/20 rounded-full italic">
+                            * Mua tối thiểu {quickViewProduct.minQuantity} cái
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                       <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Mô tả sản phẩm</h4>
+                      <p className="text-gray-500 leading-relaxed font-bold text-sm">
+                        {quickViewProduct.description}
+                      </p>
+                   </div>
+                   {quickViewProduct.details && (
+                     <div className="space-y-2 p-6 bg-gray-50 rounded-3xl border-2 border-gray-100">
+                        <h4 className="text-[10px] font-black text-primary-dark uppercase tracking-widest mb-3">Thông tin chi tiết</h4>
+                        <div className="text-xs text-gray-500 font-medium whitespace-pre-wrap leading-relaxed">
+                          {quickViewProduct.details}
+                        </div>
+                     </div>
+                   )}
+                </div>
                 <div className="mt-auto flex gap-4">
                   <button 
                     onClick={() => { 
@@ -3184,14 +3700,27 @@ export default function App() {
                         showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
                         return;
                       }
-                      addToCart(quickViewProduct, quickViewOptions); 
+                      addToCart(quickViewProduct, quickViewOptions, quickViewQuantity); 
                       setQuickViewProduct(null); 
+                    }}
+                    className="flex-grow btn-primary flex items-center justify-center gap-3 border-2 border-primary-dark bg-white text-primary-dark hover:bg-primary-light/10"
+                  >
+                    <ShoppingCart className="w-5 h-5" /> Thêm vào giỏ
+                  </button>
+                  <button 
+                    onClick={() => { 
+                      if (quickViewProduct.options?.some(opt => !quickViewOptions[opt.name])) {
+                        showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                        return;
+                      }
+                      handleBuyNow(quickViewProduct, quickViewOptions, quickViewQuantity);
+                      setQuickViewProduct(null);
                     }}
                     className="flex-grow btn-primary flex items-center justify-center gap-3"
                   >
-                    <ShoppingCart className="w-5 h-5" /> Thêm vào giỏ hàng
+                    Mua luôn ✨
                   </button>
-                  <button className="p-4 rounded-2xl bg-primary-light/30 text-primary-dark hover:bg-primary-light transition-all">
+                  <button className="p-4 rounded-2xl bg-primary-light/30 text-primary-dark hover:bg-primary-light transition-all hidden sm:block">
                     <HeartIcon className="w-6 h-6" />
                   </button>
                 </div>
@@ -3214,9 +3743,9 @@ export default function App() {
             >
               <div className="p-10 pb-4 flex justify-between items-center border-b border-gray-50">
                 <h3 className="text-3xl font-black text-gray-900">Thông tin đặt hàng 🐾</h3>
-                <button onClick={() => { setShowCheckout(false); setOrderStatus('idle'); }} className="p-2 bg-gray-100 rounded-full hover:bg-primary hover:text-white transition-all">
-                  <X className="w-6 h-6" />
-                </button>
+            <button onClick={() => { setShowCheckout(false); setOrderStatus('idle'); setDirectBuyItem(null); }} className="p-2 bg-gray-100 rounded-full hover:bg-primary hover:text-white transition-all">
+              <X className="w-6 h-6" />
+            </button>
               </div>
 
               <div className="flex-grow overflow-y-auto p-10 pt-6 custom-scrollbar">
@@ -3378,7 +3907,7 @@ export default function App() {
                     <div className="p-8 bg-gray-900 rounded-[2.5rem] text-white">
                       <div className="space-y-4 mb-8">
                         <div className="flex justify-between text-sm font-bold text-gray-400">
-                          <span>Tạm tính ({cart.length} sản phẩm):</span>
+                          <span>Tạm tính ({itemsToCheckout.length} sản phẩm):</span>
                           <span>{cartTotal.toLocaleString('vi-VN')}đ</span>
                         </div>
                         <div className="flex justify-between text-sm font-bold text-gray-400">
@@ -3523,7 +4052,7 @@ export default function App() {
                           />
                           <img src={cleanImageUrl(item.product.image)} className="w-20 h-20 rounded-2xl object-cover border-2 border-primary-light/20" />
                           <div className="flex-grow">
-                            <h4 className="font-bold text-gray-800 text-sm line-clamp-1">{item.product.name}</h4>
+                            <h4 className="product-name-elegant text-gray-800 text-sm line-clamp-1">{item.product.name}</h4>
                             {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1">
                                 {Object.entries(item.selectedOptions).map(([name, value]) => (
