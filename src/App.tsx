@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, FormEvent, ChangeEvent, Component, ReactNode } from "react";
+import { useState, useEffect, useCallback, FormEvent, ChangeEvent } from "react";
 import { 
   ShoppingBag, Search, X, User, ChevronRight, Star,
   Sparkles, PenLine, BookOpen, Palette, Scissors, ArrowRight,
   Facebook, Instagram, Phone, Mail, MapPin, Eye, EyeOff, ShoppingCart,
-  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, AlertTriangle, Camera,
+  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, Camera,
   Home, ShieldCheck, Truck, RotateCcw, Minus, Plus, Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -604,7 +604,6 @@ export default function App() {
           uid: userCredential.user.uid,
           email: loginForm.email,
           name: loginForm.name,
-          phone: loginForm.phone || "",
           coins: 0,
           role: (["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"].includes(loginForm.email) ? "admin" : "user")
         };
@@ -3932,7 +3931,7 @@ export default function App() {
               </div>
               <form className="space-y-4" onSubmit={handleAuth}>
                 {authMode === 'register' && (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-4">
                     <div>
                       <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Họ và tên</label>
                       <input 
@@ -3942,17 +3941,6 @@ export default function App() {
                         onChange={e => setLoginForm({...loginForm, name: e.target.value})}
                         className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm" 
                         placeholder="Nguyễn Văn A" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Số điện thoại</label>
-                      <input 
-                        type="tel" 
-                        required
-                        value={loginForm.phone || ""}
-                        onChange={e => setLoginForm({...loginForm, phone: e.target.value})}
-                        className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm" 
-                        placeholder="039xxxxxxx" 
                       />
                     </div>
                   </div>
@@ -4112,6 +4100,11 @@ export default function App() {
                                   <img src={item.product?.image || "https://picsum.photos/seed/placeholder/100/100"} className="w-12 h-12 rounded-xl object-cover border border-gray-100" />
                                   <div className="flex-grow">
                                     <p className="text-sm font-bold text-gray-800 line-clamp-1">{item.product?.name || "Sản phẩm không xác định"}</p>
+                                    {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                                      <p className="text-[10px] text-primary-dark font-bold italic mb-1">
+                                        Phân loại: {Object.values(item.selectedOptions).join(', ')}
+                                      </p>
+                                    )}
                                     <p className="text-xs text-gray-400 font-bold">{(item.product?.price || 0).toLocaleString('vi-VN')}đ x {item.quantity}</p>
                                   </div>
                                 </div>
@@ -4427,7 +4420,9 @@ export default function App() {
                     </div>
                     <h3 className="text-3xl font-black text-gray-900 mb-4">Đặt hàng thành công!</h3>
                     <p className="text-gray-500 font-medium mb-8">Cảm ơn bạn đã ủng hộ HanaChiBi. Báo Hồng sẽ sớm liên hệ với bạn để xác nhận đơn hàng nhé! 🐾</p>
-                    <button onClick={() => { setShowCheckout(false); setOrderStatus('idle'); }} className="btn-primary px-12">Tiếp tục mua sắm</button>
+                    <div className="flex flex-col items-center justify-center">
+                      <button onClick={() => { setShowCheckout(false); setOrderStatus('idle'); }} className="btn-primary px-12 h-14 flex items-center justify-center">Tiếp tục mua sắm</button>
+                    </div>
                   </div>
                 ) : showQR ? (
                   <div className="text-center space-y-8">
@@ -4444,7 +4439,12 @@ export default function App() {
                         <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Ngân hàng:</span> <span className="text-primary-dark">MB Bank</span></p>
                         <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Số tài khoản:</span> <span className="text-primary-dark">0396265421</span></p>
                         <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Chủ TK:</span> <span className="text-primary-dark uppercase">HanaChiBi Shop</span></p>
-                        <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Số tiền:</span> <span className="text-red-500">{(cartTotal + (customerInfo.shippingMethod === 'express' ? 35000 : 20000)).toLocaleString('vi-VN')}đ</span></p>
+                        <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Số tiền:</span> <span className="text-red-500">{(
+                          cartTotal 
+                          - (vouchers.find(v => v.code === customerInfo.voucher && cartTotal >= v.minOrder)?.discount || 0) 
+                          + (customerInfo.shippingMethod === 'express' ? 35000 : 20000)
+                          - (customerInfo.useCoins ? Math.min(user?.coins || 0, cartTotal - (vouchers.find(v => v.code === customerInfo.voucher && cartTotal >= v.minOrder)?.discount || 0) + (customerInfo.shippingMethod === 'express' ? 35000 : 20000)) : 0)
+                        ).toLocaleString('vi-VN')}đ</span></p>
                         <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Nội dung:</span> <span className="text-primary-dark">{customerInfo.phone}</span></p>
                       </div>
                     </div>
@@ -4466,6 +4466,11 @@ export default function App() {
                              <img src={cleanImageUrl(item.product.image)} className="w-12 h-12 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
                              <div className="flex-grow">
                                <p className="text-xs font-black text-gray-800 line-clamp-1">{item.product.name}</p>
+                               {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                                  <p className="text-[9px] text-primary-dark font-bold italic">
+                                    Phân loại: {Object.values(item.selectedOptions).join(', ')}
+                                  </p>
+                               )}
                                <div className="flex gap-2">
                                  <p className="text-[10px] font-bold text-gray-400 italic">
                                    SL: {item.quantity} x {item.product.price.toLocaleString('vi-VN')}đ
@@ -4635,10 +4640,19 @@ export default function App() {
                       <button 
                         type="submit"
                         disabled={orderStatus === 'submitting'}
-                        className="w-full bg-white text-gray-900 py-5 rounded-2xl font-black text-lg hover:bg-primary-light hover:text-primary-dark transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                        className="w-full bg-primary-dark text-white py-6 rounded-3xl font-black text-xl hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-3 shadow-2xl shadow-primary-dark/30 group mb-4"
                       >
-                        {orderStatus === 'submitting' ? <div className="w-6 h-6 border-4 border-gray-900 border-t-transparent rounded-full animate-spin" /> : <Sparkles className="w-6 h-6" />}
-                        {customerInfo.paymentMethod === 'bank' ? 'TIẾP TỤC THANH TOÁN' : 'XÁC NHẬN ĐẶT HÀNG'}
+                        {orderStatus === 'submitting' ? (
+                          <>
+                            <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>ĐANG XỬ LÝ...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-7 h-7 group-hover:rotate-12 transition-transform" />
+                            <span>{customerInfo.paymentMethod === 'bank' ? 'TIẾP TỤC THANH TOÁN' : 'XÁC NHẬN ĐẶT HÀNG'}</span>
+                          </>
+                        )}
                       </button>
                       <p className="text-center text-[10px] font-black text-gray-500 uppercase tracking-widest mt-4">
                         Bạn sẽ nhận được {Math.floor(cartTotal / 10000)} xu sau khi đơn hàng hoàn tất 🐾
@@ -4724,7 +4738,14 @@ export default function App() {
                       <ShoppingBag className="w-10 h-10 text-primary-dark" />
                     </div>
                     <p className="text-gray-400 font-bold">Giỏ hàng đang trống trơn~</p>
-                    <button onClick={() => setShowCart(false)} className="mt-6 text-primary font-black">Tiếp tục mua sắm</button>
+                    <div className="flex justify-center w-full">
+                      <button 
+                        onClick={() => setShowCart(false)} 
+                        className="mt-6 px-10 py-3 rounded-full bg-primary-light/30 text-primary-dark font-black hover:bg-primary-light transition-all flex items-center gap-2"
+                      >
+                        Tiếp tục mua sắm 🛍️
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-6">
@@ -4884,16 +4905,21 @@ export default function App() {
                 <div className="space-y-4">
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Sản phẩm đã mua</h4>
                   <div className="space-y-3">
-                    {(orderDetail.items || []).map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                        <img src={cleanImageUrl(item.product?.image || "https://picsum.photos/seed/placeholder/100/100")} className="w-14 h-14 rounded-xl object-cover border border-gray-200" />
-                        <div className="flex-grow">
-                          <p className="font-bold text-gray-800">{item.product?.name || "Sản phẩm không xác định"}</p>
-                          <p className="text-xs text-gray-400 font-bold">{(item.product?.price || 0).toLocaleString('vi-VN')}đ x {item.quantity}</p>
-                        </div>
-                        <p className="font-black text-primary-dark">{((item.product?.price || 0) * item.quantity).toLocaleString('vi-VN')}đ</p>
-                      </div>
-                    ))}
+                        {(orderDetail.items || []).map((item: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                            <img src={cleanImageUrl(item.product?.image || "https://picsum.photos/seed/placeholder/100/100")} className="w-14 h-14 rounded-xl object-cover border border-gray-200" />
+                            <div className="flex-grow">
+                              <p className="font-bold text-gray-800">{item.product?.name || "Sản phẩm không xác định"}</p>
+                              {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                                <p className="text-[10px] text-primary-dark font-bold italic mb-1">
+                                  Phân loại: {Object.values(item.selectedOptions).join(', ')}
+                                </p>
+                              )}
+                              <p className="text-xs text-gray-400 font-bold">{(item.product?.price || 0).toLocaleString('vi-VN')}đ x {item.quantity}</p>
+                            </div>
+                            <p className="font-black text-primary-dark">{((item.product?.price || 0) * item.quantity).toLocaleString('vi-VN')}đ</p>
+                          </div>
+                        ))}
                   </div>
                 </div>
 
