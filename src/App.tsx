@@ -20,7 +20,6 @@ import {
   collection, 
   doc, 
   setDoc, 
-  getDoc, 
   onSnapshot, 
   query, 
   where, 
@@ -205,6 +204,12 @@ const PRODUCTS: Product[] = [
 
 const FLASH_SALE_PRODUCTS = PRODUCTS.filter(p => p.isFlashSale);
 
+interface CartItem {
+  product: Product;
+  quantity: number;
+  selectedOptions?: Record<string, string>;
+}
+
 export default function App() {
   // HanaChiBi Stationery - Local Server Version (Updated)
   const [categories, setCategories] = useState<any[]>([]);
@@ -213,7 +218,19 @@ export default function App() {
   const [liveProducts, setLiveProducts] = useState<Product[]>([]);
   const [hasLoadedProducts, setHasLoadedProducts] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
-  const [cart, setCart] = useState<{product: Product, quantity: number, selectedOptions?: Record<string, string>}[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('hanachibi_cart');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('hanachibi_cart', JSON.stringify(cart));
+  }, [cart]);
+
   const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
@@ -303,34 +320,41 @@ export default function App() {
   const decorationPositions = DECORATION_POSITIONS;
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribeDoc: (() => void) | undefined;
+    
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-          let userData: any;
-          if (userDoc.exists()) {
-            userData = userDoc.data();
+        unsubscribeDoc = onSnapshot(doc(db, "users", firebaseUser.uid), async (docSnap) => {
+          if (docSnap.exists()) {
+            setUser(docSnap.data());
           } else {
-            // Create user doc if it doesn't exist (e.g. first time login)
-            userData = {
+            const userData = {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
               name: firebaseUser.displayName || "Người dùng",
               coins: 0,
               role: (["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"].includes(firebaseUser.email || "") ? "admin" : "user")
             };
-            await setDoc(doc(db, "users", firebaseUser.uid), userData);
+            try {
+              await setDoc(doc(db, "users", firebaseUser.uid), userData);
+              setUser(userData);
+            } catch (error) {
+              console.error("Error creating user document:", error);
+            }
           }
-          setUser(userData);
-        } catch (error) {
-          console.error("Error fetching user data:", error);
-        }
+          setIsAuthReady(true);
+        });
       } else {
+        if (unsubscribeDoc) unsubscribeDoc();
         setUser(null);
+        setIsAuthReady(true);
       }
-      setIsAuthReady(true);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) unsubscribeDoc();
+    };
   }, []);
 
   useEffect(() => {
@@ -645,7 +669,7 @@ export default function App() {
       if (directBuyItem) {
         setDirectBuyItem(null);
       } else {
-        setCart(prev => prev.filter(item => !selectedCartItems.includes(String(item.product.id))));
+        setCart(prev => prev.filter(item => !selectedCartItems.includes(getCartItemId(item))));
         setSelectedCartItems([]);
       }
 
@@ -929,10 +953,18 @@ export default function App() {
   };
 
   const handleAddToCartClick = (product: Product) => {
-    if (product.options && product.options.length > 0) {
+    if ((product.options && product.options.length > 0) || product.purchaseMode === 'combo') {
       openQuickView(product);
     } else {
       addToCart(product, undefined, product.minQuantity || 1);
+    }
+  };
+
+  const handleBuyNowClick = (product: Product) => {
+    if ((product.options && product.options.length > 0) || product.purchaseMode === 'combo') {
+      openQuickView(product);
+    } else {
+      handleBuyNow(product, undefined, product.minQuantity || 1);
     }
   };
 
@@ -2776,9 +2808,11 @@ export default function App() {
                     <div className="aspect-square rounded-[3rem] overflow-hidden bg-gray-50 border-2 border-gray-50 shadow-sm relative group">
                       <button 
                         onClick={() => {
-                          const imgs = [productPage.image, ...(productPage.images || [])];
-                          setProductPageImageIndex(prev => (prev - 1 + imgs.length) % imgs.length);
-                          setSelectedQuickViewImage(null);
+                          const imgs = [productPage.image, ...(productPage.images || [])].filter(Boolean);
+                          if (imgs.length > 0) {
+                            setProductPageImageIndex(prev => (prev - 1 + imgs.length) % imgs.length);
+                            setSelectedQuickViewImage(null);
+                          }
                         }}
                         className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-gray-800 shadow-xl opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-white"
                       >
@@ -2787,9 +2821,11 @@ export default function App() {
 
                       <button 
                         onClick={() => {
-                          const imgs = [productPage.image, ...(productPage.images || [])];
-                          setProductPageImageIndex(prev => (prev + 1) % imgs.length);
-                          setSelectedQuickViewImage(null);
+                          const imgs = [productPage.image, ...(productPage.images || [])].filter(Boolean);
+                          if (imgs.length > 0) {
+                            setProductPageImageIndex(prev => (prev + 1) % imgs.length);
+                            setSelectedQuickViewImage(null);
+                          }
                         }}
                         className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-gray-800 shadow-xl opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-white"
                       >
@@ -3421,13 +3457,17 @@ export default function App() {
                       </div>
                       <button 
                         onClick={() => {
-                          addToCart(product);
-                          if (!user) {
-                            showAlert("Opps! Bạn cần đăng nhập để có thể đặt hàng nhé 🌸", "info");
-                            setShowLogin(true);
-                            return;
+                          if ((product.options && product.options.length > 0) || product.purchaseMode === 'combo') {
+                            openQuickView(product);
+                          } else {
+                            addToCart(product);
+                            if (!user) {
+                              showAlert("Opps! Bạn cần đăng nhập để có thể đặt hàng nhé 🌸", "info");
+                              setShowLogin(true);
+                              return;
+                            }
+                            setShowCheckout(true);
                           }
-                          setShowCheckout(true);
                         }}
                         className="w-full mt-6 py-3 bg-red-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0"
                       >
@@ -3769,7 +3809,7 @@ export default function App() {
                         </div>
                         <button 
                           onClick={() => {
-                            handleBuyNow(product, undefined, product.minQuantity || 1);
+                            handleBuyNowClick(product);
                           }}
                           className="bg-primary-dark text-white px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95"
                         >
@@ -4411,6 +4451,29 @@ export default function App() {
                   </div>
                 ) : (
                   <form onSubmit={handleCheckout} className="space-y-8">
+                    {/* Item Summary in Checkout */}
+                    <div className="mb-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <ShoppingBag className="w-3 h-3 text-primary-dark" /> Chi tiết đơn hàng ({itemsToCheckout.length})
+                      </h4>
+                      <div className="space-y-4 max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                        {itemsToCheckout.map((item, idx) => (
+                           <div key={idx} className="flex gap-3 items-center">
+                             <img src={cleanImageUrl(item.product.image)} className="w-12 h-12 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
+                             <div className="flex-grow">
+                               <p className="text-xs font-black text-gray-800 line-clamp-1">{item.product.name}</p>
+                               <div className="flex gap-2">
+                                 <p className="text-[10px] font-bold text-gray-400 italic">
+                                   SL: {item.quantity} x {item.product.price.toLocaleString('vi-VN')}đ
+                                 </p>
+                               </div>
+                             </div>
+                             <p className="text-xs font-black text-primary-dark shrink-0">{(item.product.price * item.quantity).toLocaleString('vi-VN')}đ</p>
+                           </div>
+                        ))}
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Họ và tên</label>
@@ -4560,7 +4623,7 @@ export default function App() {
                               cartTotal 
                               - (vouchers.find(v => v.code === customerInfo.voucher && cartTotal >= v.minOrder)?.discount || 0)
                               + (customerInfo.shippingMethod === 'express' ? 35000 : 20000)
-                              - (customerInfo.useCoins ? Math.min(user?.coins || 0, cartTotal) : 0)
+                              - (customerInfo.useCoins ? Math.min(user?.coins || 0, cartTotal - (vouchers.find(v => v.code === customerInfo.voucher && cartTotal >= v.minOrder)?.discount || 0) + (customerInfo.shippingMethod === 'express' ? 35000 : 20000)) : 0)
                             ).toLocaleString('vi-VN')}đ
                           </span>
                         </div>
@@ -4694,7 +4757,7 @@ export default function App() {
                               <button 
                                 onClick={() => {
                                   if (item.quantity > 1) {
-                                    setCart(cart.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity - 1 } : c));
+                                    setCart(prev => prev.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity - 1 } : c));
                                   }
                                 }}
                                 className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
@@ -4703,7 +4766,7 @@ export default function App() {
                               </button>
                               <span className="font-black text-sm w-4 text-center">{item.quantity}</span>
                               <button 
-                                onClick={() => setCart(cart.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity + 1 } : c))}
+                                onClick={() => setCart(prev => prev.map(c => getCartItemId(c) === cartId ? { ...c, quantity: c.quantity + 1 } : c))}
                                 className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-primary-light transition-colors"
                               >
                                 +
@@ -4711,7 +4774,7 @@ export default function App() {
                             </div>
                           </div>
                           <button 
-                            onClick={() => setCart(cart.filter(c => getCartItemId(c) !== cartId))}
+                            onClick={() => setCart(prev => prev.filter(c => getCartItemId(c) !== cartId))}
                             className="text-gray-300 hover:text-red-400 transition-colors p-2"
                           >
                             <X className="w-5 h-5" />
