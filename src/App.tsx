@@ -1205,6 +1205,26 @@ export default function App() {
                               <p className="text-gray-500 font-bold flex items-center gap-2"><Phone className="w-4 h-4" /> {order.customer.phone}</p>
                               <p className="text-gray-500 font-medium flex items-center gap-2"><MapPin className="w-4 h-4" /> {order.customer.address}</p>
                             </div>
+                            
+                            {/* Admin Order Item Summary */}
+                            <div className="mt-4 pt-4 border-t border-gray-50 space-y-2">
+                              {order.items.slice(0, 3).map((item: any, idx: number) => (
+                                <div key={idx} className="flex items-center gap-2 text-[10px] font-bold text-gray-400">
+                                  <div className="w-6 h-6 rounded bg-gray-50 flex items-center justify-center shrink-0">
+                                    <img src={cleanImageUrl(item.product?.image)} className="w-full h-full object-cover rounded" />
+                                  </div>
+                                  <span className="line-clamp-1">{item.product?.name}</span>
+                                  {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                                    <span className="text-primary-dark italic">({Object.values(item.selectedOptions).join(', ')})</span>
+                                  )}
+                                  <span className="ml-auto text-gray-900">x{item.quantity}</span>
+                                </div>
+                              ))}
+                              {order.items.length > 3 && (
+                                <p className="text-[9px] font-bold text-primary-dark ml-8">...và {order.items.length - 3} sản phẩm khác</p>
+                              )}
+                            </div>
+
                             {order.customer.note && (
                               <div className="bg-primary-light/10 p-4 rounded-2xl border-l-4 border-primary-dark">
                                 <p className="text-primary-dark font-bold italic text-sm">" {order.customer.note} "</p>
@@ -4448,10 +4468,20 @@ export default function App() {
                         <p className="text-sm font-bold text-gray-700 flex justify-between"><span>Nội dung:</span> <span className="text-primary-dark">{customerInfo.phone}</span></p>
                       </div>
                     </div>
-                    <div className="flex gap-4">
-                      <button onClick={() => setShowQR(false)} className="flex-1 p-5 rounded-2xl bg-gray-100 text-gray-500 font-bold hover:bg-gray-200 transition-all">Quay lại</button>
-                      <button onClick={handleCheckout} className="flex-1 btn-primary">Tôi đã chuyển khoản</button>
-                    </div>
+                      <div className="flex gap-4">
+                        <button onClick={() => setShowQR(false)} className="flex-1 p-5 rounded-2xl bg-gray-100 text-gray-500 font-bold hover:bg-gray-200 transition-all">Quay lại</button>
+                        <button 
+                          onClick={handleCheckout} 
+                          disabled={orderStatus === 'submitting'}
+                          className="flex-1 btn-primary"
+                        >
+                          {orderStatus === 'submitting' ? (
+                            <div className="w-6 h-6 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            'Tôi đã chuyển khoản'
+                          )}
+                        </button>
+                      </div>
                   </div>
                 ) : (
                   <form onSubmit={handleCheckout} className="space-y-8">
