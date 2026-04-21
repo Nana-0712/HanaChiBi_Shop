@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, FormEvent, ChangeEvent } from "react";
+import { useState, useEffect, useCallback, useRef, FormEvent, ChangeEvent } from "react";
 import { 
   ShoppingBag, Search, X, User, ChevronRight, Star,
   Sparkles, PenLine, BookOpen, Palette, Scissors, ArrowRight,
@@ -232,19 +232,6 @@ export default function App() {
   const [liveProducts, setLiveProducts] = useState<Product[]>([]);
   const [hasLoadedProducts, setHasLoadedProducts] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('hanachibi_cart');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem('hanachibi_cart', JSON.stringify(cart));
-  }, [cart]);
-
   const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
@@ -330,6 +317,27 @@ export default function App() {
     }
   }, [user, customerInfo.name]);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [hasLoadedCart, setHasLoadedCart] = useState(false);
+  const lastUserRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    const currentUid = user?.uid;
+    const key = currentUid ? `hanachibi_cart_${currentUid}` : 'hanachibi_cart_guest';
+
+    if (currentUid !== lastUserRef.current) {
+      // User switched or initial load, load the correct cart for this user
+      const saved = localStorage.getItem(key);
+      setCart(saved ? JSON.parse(saved) : []);
+      lastUserRef.current = currentUid;
+      setHasLoadedCart(true);
+    } else if (hasLoadedCart) {
+      // Same user AND already loaded, so this is a valid cart update to save
+      localStorage.setItem(key, JSON.stringify(cart));
+    }
+  }, [cart, user?.uid, isAuthReady, hasLoadedCart]);
 
   const decorationPositions = DECORATION_POSITIONS;
 
@@ -536,14 +544,25 @@ export default function App() {
       setIsUploading(false);
     }
   };
-  const handleSubmitReview = async () => {
-    if (!user || !productPage || !reviewRating || !reviewComment) return;
+   const handleSubmitReview = async () => {
+    if (!user) {
+      showAlert("Opps! Bạn cần đăng nhập để gửi đánh giá nhé 🐾", "info");
+      setShowLogin(true);
+      return;
+    }
+
+    if (!reviewComment.trim()) {
+      showAlert("Vui lòng nhập cảm nhận của bạn trước khi gửi nhé! ✨", "info");
+      return;
+    }
+
+    if (!productPage) return;
     
     try {
       const reviewData = {
         id: Date.now().toString(),
         userId: user.uid,
-        userName: user.name,
+        userName: user.name || "Người dùng",
         rating: reviewRating,
         comment: reviewComment,
         images: reviewImages,
@@ -552,15 +571,11 @@ export default function App() {
 
       const updatedReviews = [...(productPage.reviewsList || []), reviewData];
       
-      // Update local state first for instant feedback if possible
-      // But we use onSnapshot so it will update automatically soon
-      
       const productRef = doc(db, "products", productPage.id);
       await updateDoc(productRef, {
         reviewsList: updatedReviews
       });
 
-      // Also update the productPage state if needed, though onSnapshot handles it
       setProductPage({...productPage, reviewsList: updatedReviews});
       
       setReviewRating(5);
@@ -623,6 +638,12 @@ export default function App() {
       await signOut(auth);
       setUser(null);
       toggleAdminView(false);
+      setSelectedCategory("all");
+      setSearchQuery("");
+      setProductPage(null);
+      setShowCart(false);
+      setShowCheckout(false);
+      setShowMyOrders(false);
       showAlert("Đã đăng xuất thành công! Hẹn gặp lại bạn nhé 🌸", "success");
     } catch (error) {
       console.error("Logout error:", error);
@@ -3193,8 +3214,7 @@ export default function App() {
                               </div>
                               <button 
                                 onClick={handleSubmitReview}
-                                disabled={!user || !reviewRating || !reviewComment}
-                                className="w-full py-4 btn-primary shadow-xl disabled:opacity-50 text-sm"
+                                className="w-full py-4 btn-primary shadow-xl text-sm"
                               >
                                 Gửi đánh giá ngay ✨
                               </button>
@@ -4086,7 +4106,9 @@ export default function App() {
                         <User className="w-10 h-10 text-gray-300" />
                       </div>
                       <p className="text-gray-500 font-bold mb-6">Vui lòng đăng nhập để xem đơn hàng của bạn</p>
-                      <button onClick={() => { setShowMyOrders(false); setShowLogin(true); }} className="btn-primary px-8 py-3">Đăng nhập ngay</button>
+                      <div className="flex justify-center">
+                        <button onClick={() => { setShowMyOrders(false); setShowLogin(true); }} className="btn-primary px-8 py-3">Đăng nhập ngay</button>
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-6">
