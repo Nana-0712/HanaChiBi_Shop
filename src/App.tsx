@@ -30,8 +30,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  AreaChart, Area
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 
 enum OperationType {
@@ -322,9 +321,16 @@ export default function App() {
   useEffect(() => {
     let unsubscribeDoc: (() => void) | undefined;
     
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      // Cleanup previous doc listener if it exists
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+        unsubscribeDoc = undefined;
+      }
+
       if (firebaseUser) {
-        unsubscribeDoc = onSnapshot(doc(db, "users", firebaseUser.uid), async (docSnap) => {
+        // Correctly handle the potential async doc snap logic inside the listener
+        unsubscribeDoc = onSnapshot(doc(db, "users", firebaseUser.uid), (docSnap) => {
           if (docSnap.exists()) {
             setUser(docSnap.data());
           } else {
@@ -335,17 +341,18 @@ export default function App() {
               coins: 0,
               role: (["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"].includes(firebaseUser.email || "") ? "admin" : "user")
             };
-            try {
-              await setDoc(doc(db, "users", firebaseUser.uid), userData);
-              setUser(userData);
-            } catch (error) {
-              console.error("Error creating user document:", error);
-            }
+            // Note: fire and forget the setDoc here, or handle it in a separate effect
+            setDoc(doc(db, "users", firebaseUser.uid), userData).catch(err => {
+              console.error("Error creating user document:", err);
+            });
+            setUser(userData);
           }
+          setIsAuthReady(true);
+        }, (error) => {
+          console.error("User document subscription error:", error);
           setIsAuthReady(true);
         });
       } else {
-        if (unsubscribeDoc) unsubscribeDoc();
         setUser(null);
         setIsAuthReady(true);
       }
