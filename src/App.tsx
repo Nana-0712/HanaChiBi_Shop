@@ -29,9 +29,75 @@ import {
   getDocFromServer
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
-} from 'recharts';
+
+// Biểu đồ đơn giản sử dụng SVG (không phụ thuộc thư viện ngoài để tránh lỗi build)
+const CustomSimpleAreaChart = ({ data }: { data: { name: string, value: number }[] }) => {
+  const height = 400;
+  const width = 800; // Sẽ tự co giãn qua ResponsiveContainer-like div
+  const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+  
+  if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-gray-400">Không có dữ liệu</div>;
+
+  const maxValue = Math.max(...data.map(d => d.value), 1);
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  const points = data.map((d, i) => {
+    const x = padding.left + (i / (data.length - 1)) * chartWidth;
+    const y = padding.top + chartHeight - (d.value / maxValue) * chartHeight;
+    return { x, y };
+  });
+
+  const pathData = `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(' ');
+  const areaData = pathData + ` L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
+
+  return (
+    <div className="w-full h-full relative overflow-hidden">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full preserve-aspect-ratio-none">
+        <defs>
+          <linearGradient id="svgGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffb7c5" stopOpacity="0.4" />
+            <stop offset="100%" stopColor="#ffb7c5" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        
+        {/* Lưới ngang */}
+        {[0, 0.25, 0.5, 0.75, 1].map((v, i) => {
+          const y = padding.top + chartHeight - v * chartHeight;
+          return (
+            <g key={i}>
+              <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="#f3f4f6" strokeWidth="1" />
+              <text x={padding.left - 10} y={y + 4} textAnchor="end" className="text-[10px] fill-gray-400 font-bold">
+                {Math.round(maxValue * v).toLocaleString()}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Trục X */}
+        {data.map((d, i) => {
+          const x = padding.left + (i / (data.length - 1)) * chartWidth;
+          return (
+            <text key={i} x={x} y={height - 10} textAnchor="middle" className="text-[10px] fill-gray-400 font-bold">
+              {d.name}
+            </text>
+          );
+        })}
+
+        {/* Vùng Area */}
+        <path d={areaData} fill="url(#svgGradient)" />
+        
+        {/* Đường Line */}
+        <path d={pathData} fill="none" stroke="#ffb7c5" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        
+        {/* Các điểm nút */}
+        {points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="6" fill="white" stroke="#ffb7c5" strokeWidth="3" />
+        ))}
+      </svg>
+    </div>
+  );
+};
 
 enum OperationType {
   CREATE = 'create',
@@ -1288,32 +1354,15 @@ export default function App() {
                 <div className="lg:col-span-2 bg-white p-10 rounded-[3rem] shadow-sm border-2 border-primary-light/10">
                   <h4 className="text-xl font-black text-gray-900 mb-8">Doanh thu 7 ngày qua🐾</h4>
                   <div className="h-[400px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={[...Array(7)].map((_, i) => {
-                        const date = new Date();
-                        date.setDate(date.getDate() - (6 - i));
-                        const dateStr = date.toDateString();
-                        const revenue = orders
-                          .filter(o => new Date(o.createdAt).toDateString() === dateStr && o.status !== "Đã hủy")
-                          .reduce((acc, o) => acc + o.total, 0);
-                        return { name: date.toLocaleDateString('vi-VN', { weekday: 'short', day: 'numeric' }), value: revenue };
-                      })}>
-                        <defs>
-                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ffb7c5" stopOpacity={0.8}/>
-                            <stop offset="95%" stopColor="#ffb7c5" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 'bold', fill: '#9ca3af' }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 'bold', fill: '#9ca3af' }} />
-                        <Tooltip 
-                          contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '1rem' }}
-                          labelStyle={{ fontWeight: 'black', marginBottom: '0.5rem', color: '#111827' }}
-                        />
-                        <Area type="monotone" dataKey="value" stroke="#ffb7c5" strokeWidth={4} fillOpacity={1} fill="url(#colorRevenue)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    <CustomSimpleAreaChart data={[...Array(7)].map((_, i) => {
+                      const date = new Date();
+                      date.setDate(date.getDate() - (6 - i));
+                      const dateStr = date.toDateString();
+                      const revenue = orders
+                        .filter(o => new Date(o.createdAt).toDateString() === dateStr && o.status !== "Đã hủy")
+                        .reduce((acc, o) => acc + o.total, 0);
+                      return { name: date.toLocaleDateString('vi-VN', { weekday: 'short', day: 'numeric' }), value: revenue };
+                    })} />
                   </div>
                 </div>
 
