@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, FormEvent, ChangeEvent, Component, Re
 import { 
   ShoppingBag, Search, X, User, ChevronRight, Star,
   Sparkles, PenLine, BookOpen, Palette, Scissors, ArrowRight,
-  Facebook, Instagram, Phone, Mail, MapPin, Eye, ShoppingCart,
-  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, AlertTriangle,
+  Facebook, Instagram, Phone, Mail, MapPin, Eye, EyeOff, ShoppingCart,
+  Heart as HeartIcon, Upload, Printer, Zap, MoreVertical, Trash2, Check, AlertTriangle, Camera,
   Home, ShieldCheck, Truck, RotateCcw, Minus, Plus, Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -30,6 +30,10 @@ import {
   getDocFromServer
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  AreaChart, Area
+} from 'recharts';
 
 enum OperationType {
   CREATE = 'create',
@@ -222,9 +226,15 @@ export default function App() {
   const [productPage, setProductPage] = useState<Product | null>(null);
   const [productPageQuantity, setProductPageQuantity] = useState(1);
   const [productPageOptions, setProductPageOptions] = useState<Record<string, string>>({});
+  const [productPageImageIndex, setProductPageImageIndex] = useState(0);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewImages, setReviewImages] = useState<string[]>([]);
   const [showCart, setShowCart] = useState(() => localStorage.getItem('hanachibi_show_cart') === 'true');
   const [showCheckout, setShowCheckout] = useState(() => localStorage.getItem('hanachibi_show_checkout') === 'true');
   const [showLogin, setShowLogin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [priceRange, setPriceRange] = useState<[number, number] | null>(null);
   const [isAdminView, setIsAdminView] = useState(() => localStorage.getItem('hanachibi_admin_view') === 'true');
@@ -234,7 +244,8 @@ export default function App() {
     setIsAdminView(val);
     localStorage.setItem('hanachibi_admin_view', String(val));
   };
-  const [adminTab, setAdminTab] = useState<'orders' | 'products' | 'categories' | 'settings'>(() => (localStorage.getItem('hanachibi_admin_tab') as any) || 'orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'products' | 'categories' | 'settings' | 'stats'>(() => (localStorage.getItem('hanachibi_admin_tab') as any) || 'orders');
+  const [adminProductSearch, setAdminProductSearch] = useState("");
 
   useEffect(() => {
     localStorage.setItem('hanachibi_admin_tab', adminTab);
@@ -244,6 +255,8 @@ export default function App() {
   const [showOutOfStockModal, setShowOutOfStockModal] = useState<{orderId: string, productId: string} | null>(null);
   const [affectedOrders, setAffectedOrders] = useState<any[]>([]);
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
+  const [editingCategory, setEditingCategory] = useState<any | null>(null);
+  const [comboInput, setComboInput] = useState("");
   const [orderStatus, setOrderStatus] = useState<'idle' | 'submitting' | 'success'>(() => (localStorage.getItem('hanachibi_order_status') as any) || 'idle');
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -477,10 +490,58 @@ export default function App() {
       setIsUploading(false);
     }
   };
-  const [editingCategory, setEditingCategory] = useState<any>(null);
+  const handleSubmitReview = async () => {
+    if (!user || !productPage || !reviewRating || !reviewComment) return;
+    
+    try {
+      const reviewData = {
+        id: Date.now().toString(),
+        userId: user.uid,
+        userName: user.name,
+        rating: reviewRating,
+        comment: reviewComment,
+        images: reviewImages,
+        createdAt: new Date().toISOString()
+      };
+
+      const updatedReviews = [...(productPage.reviewsList || []), reviewData];
+      
+      // Update local state first for instant feedback if possible
+      // But we use onSnapshot so it will update automatically soon
+      
+      const productRef = doc(db, "products", productPage.id);
+      await updateDoc(productRef, {
+        reviewsList: updatedReviews
+      });
+
+      // Also update the productPage state if needed, though onSnapshot handles it
+      setProductPage({...productPage, reviewsList: updatedReviews});
+      
+      setReviewRating(5);
+      setReviewComment("");
+      setReviewImages([]);
+      showAlert("Cảm ơn bạn đã gửi đánh giá nhé! 🌸", "success");
+    } catch (error) {
+      console.error("Error submitting review:", error);
+      showAlert("Có lỗi xảy ra khi gửi đánh giá. Thử lại sau nhé!", "error");
+    }
+  };
   const [subCategoriesInput, setSubCategoriesInput] = useState("");
   const [rawProductOptions, setRawProductOptions] = useState<string[]>([]);
   const [orderDetail, setOrderDetail] = useState<any>(null);
+
+  useEffect(() => {
+    if (productPage && !selectedQuickViewImage) {
+      const timer = setInterval(() => {
+        setProductPageImageIndex(prev => {
+          const images = [productPage.image, ...(productPage.images || [])].filter(Boolean);
+          if (images.length === 0) return 0;
+          return (prev + 1) % images.length;
+        });
+      }, 5000);
+      return () => clearInterval(timer);
+    }
+  }, [productPage, selectedQuickViewImage]);
 
   const handleAuth = async (e: FormEvent) => {
     e.preventDefault();
@@ -497,6 +558,7 @@ export default function App() {
           uid: userCredential.user.uid,
           email: loginForm.email,
           name: loginForm.name,
+          phone: loginForm.phone || "",
           coins: 0,
           role: (["dinhthinguyetnga.11a6hd@gmail.com", "lequan1995.ub@gmail.com"].includes(loginForm.email) ? "admin" : "user")
         };
@@ -971,6 +1033,12 @@ export default function App() {
                 Đơn hàng
               </button>
               <button 
+                onClick={() => setAdminTab('stats')} 
+                className={`px-8 py-3 rounded-2xl font-black transition-all ${adminTab === 'stats' ? 'bg-primary-dark text-white' : 'bg-white text-gray-400'}`}
+              >
+                Thống kê
+              </button>
+              <button 
                 onClick={() => { setAdminTab('products'); }} 
                 className={`px-8 py-3 rounded-2xl font-black transition-all ${adminTab === 'products' ? 'bg-primary-dark text-white' : 'bg-white text-gray-400'}`}
               >
@@ -1178,10 +1246,190 @@ export default function App() {
                 )}
               </div>
             </div>
+          ) : adminTab === 'stats' ? (
+            <div className="space-y-12">
+              {/* Stats Metrics Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+                {[
+                  { 
+                    label: "Doanh thu hôm nay", 
+                    value: orders.filter(o => {
+                      const orderDate = new Date(o.createdAt).toDateString();
+                      const today = new Date().toDateString();
+                      return orderDate === today && o.status !== "Đã hủy";
+                    }).reduce((acc, o) => acc + o.total, 0).toLocaleString('vi-VN') + "đ",
+                    icon: Zap,
+                    color: "bg-orange-100 text-orange-600"
+                  },
+                  { 
+                    label: "Đơn hàng mới", 
+                    value: orders.filter(o => {
+                      const orderDate = new Date(o.createdAt).toDateString();
+                      const today = new Date().toDateString();
+                      return orderDate === today && o.status !== "Đã hủy";
+                    }).length.toLocaleString('vi-VN'),
+                    icon: ShoppingBag,
+                    color: "bg-blue-100 text-blue-600"
+                  },
+                  { 
+                    label: "Sản phẩm đã bán", 
+                    value: orders.filter(o => o.status !== "Đã hủy").reduce((acc, o) => acc + (o.items?.reduce((pacc: number, item: any) => pacc + item.quantity, 0) || 0), 0).toLocaleString('vi-VN'),
+                    icon: Check,
+                    color: "bg-green-100 text-green-600"
+                  },
+                  { 
+                    label: "Tổng lợi nhuận", 
+                    value: (orders.filter(o => o.status !== "Đã hủy").reduce((acc, o) => acc + o.total, 0) * 0.4).toLocaleString('vi-VN') + "đ", // Mẫu Giả định lãi 40%
+                    icon: HeartIcon,
+                    color: "bg-pink-100 text-pink-600"
+                  }
+                ].map((stat, i) => (
+                  <div key={i} className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-primary-light/10 flex items-center gap-6">
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${stat.color}`}>
+                      <stat.icon className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">{stat.label}</p>
+                      <h4 className="text-2xl font-black text-gray-900">{stat.value}</h4>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Charts Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 bg-white p-10 rounded-[3rem] shadow-sm border-2 border-primary-light/10">
+                  <h4 className="text-xl font-black text-gray-900 mb-8">Doanh thu 7 ngày qua🐾</h4>
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={[...Array(7)].map((_, i) => {
+                        const date = new Date();
+                        date.setDate(date.getDate() - (6 - i));
+                        const dateStr = date.toDateString();
+                        const revenue = orders
+                          .filter(o => new Date(o.createdAt).toDateString() === dateStr && o.status !== "Đã hủy")
+                          .reduce((acc, o) => acc + o.total, 0);
+                        return { name: date.toLocaleDateString('vi-VN', { weekday: 'short', day: 'numeric' }), value: revenue };
+                      })}>
+                        <defs>
+                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ffb7c5" stopOpacity={0.8}/>
+                            <stop offset="95%" stopColor="#ffb7c5" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 'bold', fill: '#9ca3af' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 'bold', fill: '#9ca3af' }} />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '1rem' }}
+                          labelStyle={{ fontWeight: 'black', marginBottom: '0.5rem', color: '#111827' }}
+                        />
+                        <Area type="monotone" dataKey="value" stroke="#ffb7c5" strokeWidth={4} fillOpacity={1} fill="url(#colorRevenue)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white p-10 rounded-[3rem] shadow-sm border-2 border-primary-light/10">
+                  <h4 className="text-xl font-black text-gray-900 mb-8">Top 5 Bán Chạy 🎀</h4>
+                  <div className="space-y-6">
+                    {Array.from(
+                      orders.filter(o => o.status !== "Đã hủy").reduce((acc, o) => {
+                        (o.items || []).forEach((item: any) => {
+                          const id = item.product.id;
+                          if (!acc.has(id)) acc.set(id, { name: item.product.name, qty: 0, revenue: 0, image: item.product.image });
+                          const entry = acc.get(id);
+                          entry.qty += item.quantity;
+                          entry.revenue += item.quantity * item.product.price;
+                        });
+                        return acc;
+                      }, new Map()).values()
+                    )
+                    .sort((a, b) => b.qty - a.qty)
+                    .slice(0, 5)
+                    .map((p: any, i) => (
+                      <div key={i} className="flex items-center gap-4 group">
+                        <div className="w-16 h-16 rounded-2xl bg-gray-50 overflow-hidden border-2 border-gray-50 shadow-sm relative shrink-0">
+                          <img src={cleanImageUrl(p.image)} className="w-full h-full object-cover" />
+                          <div className="absolute top-0 left-0 bg-primary-dark text-white text-[10px] font-black w-6 h-6 flex items-center justify-center rounded-br-xl">
+                            {i + 1}
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-grow">
+                          <p className="font-black text-gray-900 text-sm line-clamp-1 group-hover:text-primary-dark transition-colors">{p.name}</p>
+                          <p className="text-xs font-bold text-gray-400 mt-0.5">{p.qty} sản phẩm • <span className="text-primary-dark font-black">{p.revenue.toLocaleString('vi-VN')}đ</span></p>
+                        </div>
+                      </div>
+                    ))}
+                    {orders.length === 0 && <p className="text-gray-400 font-bold text-center py-20 italic">Chưa có dữ liệu giao dịch...</p>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Orders Table */}
+              <div className="bg-white p-10 rounded-[3rem] shadow-sm border-2 border-primary-light/10 overflow-hidden">
+                <div className="flex justify-between items-center mb-8">
+                  <h4 className="text-xl font-black text-gray-900">Đơn hàng mới gần đây 🐾</h4>
+                  <button onClick={() => setAdminTab('orders')} className="text-sm font-black text-primary-dark hover:underline">Xem tất cả</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b-2 border-gray-50">
+                        <th className="pb-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Thời gian</th>
+                        <th className="pb-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Sản phẩm</th>
+                        <th className="pb-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Số lượng</th>
+                        <th className="pb-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Tổng tiền</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 font-bold">
+                      {orders.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5).map(o => (
+                        <tr key={o.id} className="group hover:bg-gray-50/50 transition-colors">
+                          <td className="py-6 pr-6">
+                            <p className="text-gray-900 text-sm">{new Date(o.createdAt).toLocaleDateString('vi-VN')}</p>
+                            <p className="text-[10px] text-gray-400 italic">{new Date(o.createdAt).toLocaleTimeString('vi-VN')}</p>
+                          </td>
+                          <td className="py-6 pr-6">
+                            <div className="space-y-1">
+                              {o.items.map((item: any, idx: number) => (
+                                <p key={idx} className="text-xs text-gray-700 line-clamp-1 truncate max-w-[200px]">• {item.product.name}</p>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-6 text-center font-black text-gray-900">
+                            {o.items.reduce((acc: number, item: any) => acc + item.quantity, 0)}
+                          </td>
+                          <td className="py-6 text-right">
+                            <p className="text-primary-dark font-black">{o.total.toLocaleString('vi-VN')}đ</p>
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
+                              o.status === 'Đã giao' ? 'bg-green-100 text-green-600' :
+                              o.status === 'Đã hủy' ? 'bg-red-100 text-red-600' :
+                              'bg-primary-light/20 text-primary-dark'
+                            }`}>{o.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           ) : adminTab === 'products' ? (
             <div className="space-y-8">
-              <div className="flex justify-between items-center">
-                <h3 className="text-2xl font-black text-gray-800">Danh sách sản phẩm ({liveProducts.length})</h3>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div>
+                  <h3 className="text-2xl font-black text-gray-800">Danh sách sản phẩm ({liveProducts.length})</h3>
+                  <div className="mt-4 relative w-full md:w-96">
+                    <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <input 
+                      type="text"
+                      placeholder="Tìm kiếm sản phẩm trong kho..."
+                      value={adminProductSearch}
+                      onChange={e => setAdminProductSearch(e.target.value)}
+                      className="w-full pl-16 pr-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm transition-all text-sm"
+                    />
+                  </div>
+                </div>
                 <button 
                   onClick={() => {
                     const firstCat = categories.find(c => c.id !== 'all');
@@ -1198,6 +1446,7 @@ export default function App() {
                       reviews: 0 
                     });
                     setRawProductOptions([]);
+                    setComboInput("");
                   }}
                   className="btn-primary px-8"
                 >
@@ -1206,7 +1455,7 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {liveProducts.map(product => (
+                {liveProducts.filter(p => p.name.toLowerCase().includes(adminProductSearch.toLowerCase())).map(product => (
                   <div key={product.id} className="bg-white p-6 rounded-[2.5rem] shadow-sm flex gap-4 items-center border-2 border-transparent hover:border-primary-light transition-all">
                     <img src={product.image} className="w-24 h-24 rounded-2xl object-cover" referrerPolicy="no-referrer" />
                     <div className="flex-grow">
@@ -1226,6 +1475,7 @@ export default function App() {
                         <button onClick={() => {
                           setEditingProduct(product);
                           setRawProductOptions(product.options?.map(o => o.values.join(", ")) || []);
+                          setComboInput(product.combos?.join(", ") || "");
                         }} className="text-xs font-black text-blue-500 hover:underline">Sửa</button>
                         <button onClick={() => handleDeleteProduct(product.id)} className="text-xs font-black text-red-500 hover:underline">Xóa</button>
                       </div>
@@ -1554,7 +1804,7 @@ export default function App() {
                       <button 
                         onClick={() => {
                           setEditingCategory(cat);
-                          setSubCategoriesInput(cat.subCategories.join(", "));
+                          setSubCategoriesInput(cat.subCategories?.join(", ") || "");
                         }}
                         className="text-xs font-black text-blue-500 hover:underline uppercase tracking-widest"
                       >
@@ -1731,201 +1981,263 @@ export default function App() {
                   initial={{ scale: 0.9, opacity: 0 }} 
                   animate={{ scale: 1, opacity: 1 }} 
                   exit={{ scale: 0.9, opacity: 0 }}
-                  className="relative bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl p-10 max-h-[90vh] overflow-y-auto"
+                  className="relative bg-white w-full max-w-5xl rounded-[3rem] shadow-2xl p-8 md:p-12 max-h-[95vh] overflow-y-auto"
                 >
-                  <h3 className="text-3xl font-black text-gray-900 mb-8">{editingProduct.id ? "Sửa sản phẩm" : "Thêm sản phẩm"} 🐾</h3>
-                  <form onSubmit={handleSaveProduct} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-6">
-                        <div className="space-y-2">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Tên sản phẩm</label>
-                          <input 
-                            required
-                            value={editingProduct.name}
-                            onChange={e => setEditingProduct({...editingProduct, name: e.target.value})}
-                            className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                          />
+                  <h3 className="text-3xl font-black text-gray-900 mb-10">{editingProduct.id ? "Sửa sản phẩm" : "Thêm sản phẩm"} 🐾</h3>
+                  <form onSubmit={handleSaveProduct} className="space-y-10">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+                      <div className="lg:col-span-7 space-y-8">
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-black text-primary-dark uppercase tracking-widest flex items-center gap-2">
+                             <Info className="w-4 h-4" /> Thông tin sản phẩm
+                           </h4>
+                          <div className="space-y-6 bg-gray-50/50 p-6 rounded-[2.5rem] border border-gray-100">
+                             <div className="space-y-2">
+                               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Tên sản phẩm</label>
+                               <input 
+                                 required
+                                 value={editingProduct.name}
+                                 onChange={e => setEditingProduct({...editingProduct, name: e.target.value})}
+                                 className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                               />
+                             </div>
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Danh mục</label>
+                                 <select 
+                                   value={editingProduct.category}
+                                   onChange={e => setEditingProduct({...editingProduct, category: e.target.value, subCategory: ""})}
+                                   className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm appearance-none"
+                                 >
+                                   {categories.filter(c => c.id !== 'all').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                 </select>
+                               </div>
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Dòng sản phẩm</label>
+                                 <select 
+                                   value={editingProduct.subCategory || ""}
+                                   onChange={e => setEditingProduct({...editingProduct, subCategory: e.target.value})}
+                                   className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm appearance-none"
+                                 >
+                                   <option value="">-- Chọn dòng --</option>
+                                   {categories.find(c => c.id === editingProduct.category)?.subCategories?.map(sub => (
+                                     <option key={sub} value={sub}>{sub}</option>
+                                   ))}
+                                 </select>
+                               </div>
+                             </div>
+                             
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-100 pt-6">
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Thương hiệu</label>
+                                 <select 
+                                   value={editingProduct.brand || ""}
+                                   onChange={e => setEditingProduct({...editingProduct, brand: e.target.value})}
+                                   className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm appearance-none"
+                                 >
+                                   <option value="">Chưa có thương hiệu</option>
+                                   {["Thiên Long", "Flexoffice", "Điểm 10", "Colokit", "HanaChiBi"].map(brand => (
+                                     <option key={brand} value={brand}>{brand}</option>
+                                   ))}
+                                 </select>
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Chế độ mua hàng</label>
+                                  <div className="flex bg-white p-1 rounded-2xl border border-gray-100 shadow-sm h-full">
+                                    <button 
+                                      type="button"
+                                      onClick={() => setEditingProduct({...editingProduct, purchaseMode: 'quantity'})}
+                                      className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${(!editingProduct.purchaseMode || editingProduct.purchaseMode === 'quantity') ? 'bg-primary-dark text-white shadow-lg' : 'text-gray-400 hover:text-gray-600'}`}
+                                    >
+                                      Số lượng
+                                    </button>
+                                    <button 
+                                      type="button"
+                                      onClick={() => setEditingProduct({...editingProduct, purchaseMode: 'combo'})}
+                                      className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${editingProduct.purchaseMode === 'combo' ? 'bg-primary-dark text-white shadow-lg' : 'text-gray-400 hover:text-gray-600'}`}
+                                    >
+                                      Combo
+                                    </button>
+                                  </div>
+                               </div>
+                             </div>
+
+                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-gray-100 pt-6">
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Giá bán (đ)</label>
+                                 <input 
+                                   required
+                                   type="number"
+                                   value={editingProduct.price}
+                                   onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value)})}
+                                   className="w-full px-6 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                                 />
+                               </div>
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Giá niêm yết</label>
+                                 <input 
+                                   type="number"
+                                   value={editingProduct.originalPrice || ""}
+                                   onChange={e => setEditingProduct({...editingProduct, originalPrice: e.target.value ? parseInt(e.target.value) : undefined})}
+                                   className="w-full px-6 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                                 />
+                               </div>
+                               <div className="space-y-2">
+                                 <div 
+                                   className="flex items-center gap-3 px-4 py-4 bg-primary-light/10 rounded-2xl border-2 border-transparent hover:border-primary-light transition-all cursor-pointer shadow-sm group h-full"
+                                   onClick={() => {
+                                     const el = document.getElementById('isFlashSale-modal') as HTMLInputElement;
+                                     if (el) el.click();
+                                   }}
+                                 >
+                                   <input 
+                                     type="checkbox"
+                                     id="isFlashSale-modal"
+                                     checked={editingProduct.isFlashSale || false}
+                                     onClick={(e) => e.stopPropagation()}
+                                     onChange={e => {
+                                       const checked = e.target.checked;
+                                       const currentPrice = editingProduct.price || 0;
+                                       const currentOriginal = editingProduct.originalPrice || 0;
+                                       
+                                       if (checked) {
+                                         const newOriginal = currentOriginal > currentPrice ? currentOriginal : currentPrice;
+                                         const newPrice = currentOriginal > currentPrice ? currentPrice : Math.round((currentPrice * 0.8) / 1000) * 1000;
+                                         setEditingProduct({
+                                           ...editingProduct,
+                                           isFlashSale: true,
+                                           originalPrice: newOriginal,
+                                           price: newPrice
+                                         });
+                                       } else {
+                                         setEditingProduct({
+                                           ...editingProduct,
+                                           isFlashSale: false,
+                                           price: currentOriginal > 0 ? currentOriginal : currentPrice,
+                                           originalPrice: undefined
+                                         });
+                                       }
+                                     }}
+                                     className="w-5 h-5 rounded-lg accent-primary-dark cursor-pointer"
+                                   />
+                                   <label htmlFor="isFlashSale-modal" className="font-black text-primary-dark cursor-pointer text-[9px] uppercase tracking-widest">Sale ⚡</label>
+                                 </div>
+                               </div>
+                             </div>
+
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-100 pt-6">
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">
+                                   {editingProduct.purchaseMode === 'combo' ? 'Trong combo có' : 'Tối thiểu'}
+                                 </label>
+                                 <input 
+                                   type="text"
+                                   value={editingProduct.purchaseMode === 'combo' ? (comboInput !== "" ? comboInput : (editingProduct.combos?.join(", ") || "")) : (editingProduct.minQuantity || 1)}
+                                   onChange={e => {
+                                     if (editingProduct.purchaseMode === 'combo') {
+                                       setComboInput(e.target.value);
+                                       const combos = e.target.value.split(",").map(v => parseInt(v.trim())).filter(v => !isNaN(v));
+                                       setEditingProduct({...editingProduct, combos});
+                                     } else {
+                                       setEditingProduct({...editingProduct, minQuantity: parseInt(e.target.value) || 1});
+                                     }
+                                   }}
+                                   className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                                 />
+                               </div>
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Tồn kho</label>
+                                 <input 
+                                   type="number"
+                                   value={editingProduct.totalStock || 0}
+                                   onChange={e => setEditingProduct({...editingProduct, totalStock: parseInt(e.target.value) || 0})}
+                                   className="w-full px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                                 />
+                               </div>
+                             </div>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-6">
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Giá bán (VNĐ)</label>
-                            <input 
-                              required
-                              type="number"
-                              value={editingProduct.price}
-                              onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value)})}
-                              className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Giá gốc (không bắt buộc)</label>
-                            <input 
-                              type="number"
-                              value={editingProduct.originalPrice || ""}
-                              onChange={e => setEditingProduct({...editingProduct, originalPrice: e.target.value ? parseInt(e.target.value) : undefined})}
-                              placeholder="Để trống nếu không giảm giá"
-                              className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-6">
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Số lượng trong kho</label>
-                            <input 
-                              type="number"
-                              value={editingProduct.totalStock || 0}
-                              onChange={e => setEditingProduct({...editingProduct, totalStock: parseInt(e.target.value)})}
-                              className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Đã bán (Giả lập nếu cần)</label>
-                             <input 
-                               type="number"
-                               value={editingProduct.soldCount || 0}
-                               onChange={e => setEditingProduct({...editingProduct, soldCount: parseInt(e.target.value)})}
-                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                             />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-6">
-                           <div className="space-y-2">
-                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mua tối thiểu (Default 1)</label>
-                             <input 
-                               type="number"
-                               min={1}
-                               value={editingProduct.minQuantity || 1}
-                               onChange={e => setEditingProduct({...editingProduct, minQuantity: parseInt(e.target.value) || 1})}
-                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                             />
+
+                        <div className="space-y-6">
+                           <h4 className="flex items-center gap-3 text-sm font-black text-primary-dark uppercase tracking-widest px-4 border-l-4 border-primary-dark">
+                             <PenLine className="w-4 h-4" /> Nội dung sản phẩm
+                           </h4>
+                           <div className="space-y-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Mô tả ngắn</label>
+                              <textarea 
+                                required
+                                value={editingProduct.description}
+                                onChange={e => setEditingProduct({...editingProduct, description: e.target.value})}
+                                className="w-full px-8 py-4 rounded-3xl bg-gray-50/50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-32 shadow-sm resize-none"
+                                placeholder="..."
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Thông số chi tiết</label>
+                              <textarea 
+                                value={editingProduct.details || ""}
+                                onChange={e => setEditingProduct({...editingProduct, details: e.target.value})}
+                                className="w-full px-8 py-4 rounded-3xl bg-gray-50/50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-56 shadow-sm resize-none"
+                                placeholder="..."
+                              />
+                            </div>
                            </div>
-                           <div className="space-y-2">
-                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Thương hiệu</label>
-                             <select 
-                               value={editingProduct.brand || ""}
-                               onChange={e => setEditingProduct({...editingProduct, brand: e.target.value})}
-                               className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none"
-                             >
-                               <option value="">Chọn thương hiệu</option>
-                               {["Thiên Long", "Flexoffice", "Điểm 10", "Colokit", "HanaChiBi"].map(brand => (
-                                 <option key={brand} value={brand}>{brand}</option>
-                               ))}
-                             </select>
-                           </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Danh mục</label>
-                          <select 
-                            value={editingProduct.category}
-                            onChange={e => setEditingProduct({...editingProduct, category: e.target.value, subCategory: ""})}
-                            className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none"
-                          >
-                            {categories.filter(c => c.id !== 'all').length === 0 && (
-                              <option value="">Đang tải danh mục...</option>
-                            )}
-                            {categories.filter(c => c.id !== 'all').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Loại sản phẩm (Dòng)</label>
-                          <select 
-                            value={editingProduct.subCategory || ""}
-                            onChange={e => setEditingProduct({...editingProduct, subCategory: e.target.value})}
-                            className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none"
-                          >
-                            <option value="">-- Chọn loại sản phẩm --</option>
-                            {categories.find(c => c.id === editingProduct.category)?.subCategories?.map(sub => (
-                              <option key={sub} value={sub}>{sub}</option>
-                            ))}
-                            {(!editingProduct.category || !categories.find(c => c.id === editingProduct.category)?.subCategories?.length) && (
-                              <option value="" disabled>Vui lòng chọn danh mục trước</option>
-                            )}
-                          </select>
-                        </div>
-                        <div className="flex items-center gap-4 p-4 bg-primary-light/10 rounded-2xl">
-                          <input 
-                            type="checkbox"
-                            id="isFlashSale"
-                            checked={editingProduct.isFlashSale || false}
-                            onChange={e => {
-                              const checked = e.target.checked;
-                              const currentPrice = editingProduct.price || 0;
-                              const currentOriginal = editingProduct.originalPrice || 0;
-                              
-                              if (checked) {
-                                // Turning ON Flash Sale: Apply 20% discount if not already discounted
-                                const newOriginal = currentOriginal > currentPrice ? currentOriginal : currentPrice;
-                                const newPrice = currentOriginal > currentPrice ? currentPrice : Math.round((currentPrice * 0.8) / 1000) * 1000;
-                                setEditingProduct({
-                                  ...editingProduct,
-                                  isFlashSale: true,
-                                  originalPrice: newOriginal,
-                                  price: newPrice
-                                });
-                              } else {
-                                // Turning OFF Flash Sale: Restore price if it was a discount
-                                setEditingProduct({
-                                  ...editingProduct,
-                                  isFlashSale: false,
-                                  price: currentOriginal > 0 ? currentOriginal : currentPrice,
-                                  originalPrice: undefined
-                                });
-                              }
-                            }}
-                            className="w-6 h-6 rounded-lg accent-primary-dark"
-                          />
-                          <label htmlFor="isFlashSale" className="font-black text-primary-dark cursor-pointer">Hiển thị trong Flash Sale ⚡</label>
                         </div>
                       </div>
 
-                      <div className="space-y-6">
-                        <div className="space-y-4">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Hình ảnh sản phẩm (Nhiều ảnh)</label>
-                          <div className="flex gap-4">
-                            <input 
-                              placeholder="Dán link ảnh hoặc tải lên..."
-                              className="flex-1 px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  const target = e.target as HTMLInputElement;
-                                  if (target.value) {
-                                    const url = cleanImageUrl(target.value);
-                                    const currentImages = editingProduct.images || [];
-                                    setEditingProduct({
-                                      ...editingProduct,
-                                      image: editingProduct.image || url,
-                                      images: [...currentImages, url]
-                                    });
-                                    target.value = "";
-                                  }
-                                }
-                              }}
-                            />
-                             <div className="relative">
-                               <button 
-                                 type="button" 
-                                 disabled={isUploading}
-                                 className="h-full px-6 rounded-2xl bg-primary-light/20 text-primary-dark font-black hover:bg-primary-light transition-all flex items-center gap-2 disabled:opacity-50"
-                               >
-                                 {isUploading ? <Sparkles className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
-                                 {isUploading ? "..." : "Tải lên"}
-                               </button>
-                               {!isUploading && (
-                                 <input 
-                                   type="file" 
-                                   accept="image/*"
-                                   onChange={handleProductImageUpload}
-                                   className="absolute inset-0 opacity-0 cursor-pointer"
-                                 />
-                               )}
+                      {/* Right Side Column: Pricing & Images */}
+                      <div className="lg:col-span-5 space-y-10">
+                        <div className="space-y-6">
+                           <h4 className="flex items-center gap-3 text-sm font-black text-primary-dark uppercase tracking-widest px-4 border-l-4 border-primary-dark">
+                             <Upload className="w-4 h-4" /> Hình ảnh sản phẩm
+                           </h4>
+                           <div className="bg-gray-50/50 p-8 rounded-[2.5rem] border border-gray-100 space-y-8">
+                             <div className="flex gap-4">
+                                <input 
+                                  placeholder="Dán link ảnh..."
+                                  className="flex-1 px-8 py-4 rounded-2xl bg-white border-2 border-transparent focus:border-primary-light outline-none font-bold shadow-sm"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const target = e.target as HTMLInputElement;
+                                      if (target.value) {
+                                        const url = cleanImageUrl(target.value);
+                                        const currentImages = editingProduct.images || [];
+                                        setEditingProduct({
+                                          ...editingProduct,
+                                          image: editingProduct.image || url,
+                                          images: [...currentImages, url]
+                                        });
+                                        target.value = "";
+                                      }
+                                    }
+                                  }}
+                                />
+                                <div className="relative">
+                                  <button 
+                                    type="button" 
+                                    disabled={isUploading}
+                                    className="h-full px-8 rounded-2xl bg-primary-dark text-white font-black hover:bg-black transition-all flex items-center gap-2 shadow-xl shadow-primary-dark/20 disabled:opacity-50"
+                                  >
+                                    {isUploading ? <Sparkles className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+                                  </button>
+                                  {!isUploading && (
+                                    <input 
+                                      type="file" 
+                                      accept="image/*"
+                                      onChange={handleProductImageUpload}
+                                      className="absolute inset-0 opacity-0 cursor-pointer"
+                                    />
+                                  )}
+                                </div>
                              </div>
-                          </div>
                           
-                          <div className="grid grid-cols-4 gap-4 mt-6">
+                          <div className="grid grid-cols-2 gap-6 mt-6">
                             {(editingProduct.images || []).map((img, idx) => (
-                              <div key={idx} className="relative aspect-square rounded-2xl overflow-hidden border-2 border-gray-100 group">
+                              <div key={idx} className="relative aspect-square rounded-[2rem] overflow-hidden border-4 border-white shadow-xl group hover:scale-[1.05] transition-all">
                                 <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity" />
                                 <button 
                                   type="button"
                                   onClick={() => {
@@ -1936,77 +2248,151 @@ export default function App() {
                                       image: editingProduct.image === img ? (newImgs[0] || "") : editingProduct.image
                                     });
                                   }}
-                                  className="absolute top-1 right-1 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                  className="absolute top-4 right-4 w-12 h-12 bg-red-500 text-white rounded-3xl flex items-center justify-center shadow-2xl z-10 transition-transform active:scale-90 hover:scale-110"
                                 >
-                                  <X className="w-3 h-3" />
+                                  <X className="w-7 h-7 stroke-[4]" />
                                 </button>
                                 <button 
                                   type="button"
                                   onClick={() => setEditingProduct({ ...editingProduct, image: img })}
-                                  className={`absolute bottom-1 left-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${editingProduct.image === img ? 'bg-primary-dark text-white' : 'bg-white/80 text-gray-500 opacity-0 group-hover:opacity-100'}`}
+                                  className={`absolute bottom-4 left-4 right-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all z-10 ${editingProduct.image === img ? 'bg-primary-dark text-white shadow-lg' : 'bg-white/90 text-gray-600 opacity-0 group-hover:opacity-100'}`}
                                 >
-                                  {editingProduct.image === img ? "Ảnh chính" : "Làm ảnh chính"}
+                                  {editingProduct.image === img ? "✨ Ảnh bìa" : "Làm ảnh bìa"}
                                 </button>
                               </div>
                             ))}
                             {!(editingProduct.images || []).length && editingProduct.image && (
-                               <div className="relative aspect-square rounded-2xl overflow-hidden border-2 border-primary-light group">
+                               <div className="relative aspect-square rounded-3xl overflow-hidden border-2 border-primary-light group">
                                  <img src={editingProduct.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                 <div className="absolute top-1 right-1 p-1 bg-primary-dark text-white rounded-lg text-[8px] font-black uppercase px-2">Legacy Only</div>
+                                 <div className="absolute top-2 right-2 p-1.5 bg-primary-dark text-white rounded-xl text-[8px] font-black uppercase px-3">Thumbnail</div>
                                </div>
                             )}
                           </div>
-                          <p className="text-[10px] text-gray-400 ml-4 italic">* Bạn có thể thêm nhiều ảnh. Ảnh đầu tiên hoặc ảnh được chọn sẽ là ảnh đại diện. ✨</p>
+                          <p className="text-[10px] text-gray-400 ml-4 italic leading-relaxed">* Dàn đều ảnh sản phẩm. Nhấn X để xóa, "Làm ảnh bìa" để chọn ảnh hiển thị chính nhé bạn! ~ 🌸</p>
                         </div>
                       </div>
                     </div>
+                  </div>
 
                     <div className="space-y-4">
                       <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Phân loại (Màu sắc, Kích thước...)</label>
                       <div className="space-y-4 bg-gray-50 p-6 rounded-3xl border-2 border-gray-100">
                         {(editingProduct.options || []).map((opt, idx) => (
-                          <div key={idx} className="flex flex-col md:flex-row gap-4 items-start md:items-end bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-                            <div className="w-full md:w-1/3 space-y-1">
-                              <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Tên (Ví dụ: Màu sắc)</label>
-                              <input 
-                                value={opt.name}
-                                onChange={e => {
-                                  const newOpts = [...(editingProduct.options || [])];
-                                  newOpts[idx] = { ...newOpts[idx], name: e.target.value };
+                          <div key={idx} className="bg-white p-6 rounded-[2rem] border-2 border-gray-100 space-y-6">
+                            <div className="flex flex-col md:flex-row gap-6">
+                              <div className="flex-grow space-y-4">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Tên (Ví dụ: Màu sắc)</label>
+                                  <input 
+                                    value={opt.name}
+                                    onChange={e => {
+                                      const newOpts = [...(editingProduct.options || [])];
+                                      newOpts[idx] = { ...newOpts[idx], name: e.target.value };
+                                      setEditingProduct({...editingProduct, options: newOpts});
+                                    }}
+                                    placeholder="Màu sắc"
+                                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Giá trị (Cách nhau bằng dấu phẩy)</label>
+                                  <input 
+                                    value={rawProductOptions[idx] !== undefined ? rawProductOptions[idx] : opt.values.join(", ")}
+                                    onChange={e => {
+                                      const newRaw = [...rawProductOptions];
+                                      newRaw[idx] = e.target.value;
+                                      setRawProductOptions(newRaw);
+                                      
+                                      const newOpts = [...(editingProduct.options || [])];
+                                      newOpts[idx] = { ...newOpts[idx], values: e.target.value.split(",").map(v => v.trim()).filter(v => v !== "") };
+                                      setEditingProduct({...editingProduct, options: newOpts});
+                                    }}
+                                    placeholder="Hồng, Xanh, Vàng"
+                                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
+                                  />
+                                </div>
+                              </div>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const newOpts = (editingProduct.options || []).filter((_, i) => i !== idx);
                                   setEditingProduct({...editingProduct, options: newOpts});
+                                  setRawProductOptions(rawProductOptions.filter((_, i) => i !== idx));
                                 }}
-                                placeholder="Màu sắc"
-                                className="w-full px-4 py-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
-                              />
+                                className="p-4 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all self-start"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
                             </div>
-                            <div className="w-full md:flex-grow space-y-1">
-                              <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Giá trị (Cách nhau bằng dấu phẩy)</label>
-                              <input 
-                                value={rawProductOptions[idx] !== undefined ? rawProductOptions[idx] : opt.values.join(", ")}
-                                onChange={e => {
-                                  const newRaw = [...rawProductOptions];
-                                  newRaw[idx] = e.target.value;
-                                  setRawProductOptions(newRaw);
-                                  
-                                  const newOpts = [...(editingProduct.options || [])];
-                                  newOpts[idx] = { ...newOpts[idx], values: e.target.value.split(",").map(v => v.trim()).filter(v => v !== "") };
-                                  setEditingProduct({...editingProduct, options: newOpts});
-                                }}
-                                placeholder="Hồng, Xanh, Vàng"
-                                className="w-full px-4 py-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-primary-light outline-none font-bold text-sm transition-all"
-                              />
-                            </div>
-                            <button 
-                              type="button"
-                              onClick={() => {
-                                const newOpts = (editingProduct.options || []).filter((_, i) => i !== idx);
-                                setEditingProduct({...editingProduct, options: newOpts});
-                                setRawProductOptions(rawProductOptions.filter((_, i) => i !== idx));
-                              }}
-                              className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all self-end md:mb-1"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
+
+                            {/* Option value images */}
+                            {opt.values.length > 0 && (
+                              <div className="space-y-3">
+                                <label className="text-[10px] font-black text-gray-400 uppercase ml-4 block italic underline decoration-primary-light">Tải lên ảnh cho từng giá trị (Nếu cần đồng bộ ảnh khi khách chọn)</label>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                                  {opt.values.map(val => (
+                                    <div key={val} className="p-3 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 relative group">
+                                      <p className="text-[10px] font-black text-gray-600 truncate pr-6">{val}</p>
+                                      <div className="aspect-square bg-white rounded-xl overflow-hidden relative flex items-center justify-center border-2 border-dashed border-gray-200 group-hover:border-primary-light transition-all">
+                                        {opt.images?.[val] ? (
+                                          <img src={cleanImageUrl(opt.images[val])} className="w-full h-full object-cover" />
+                                        ) : (
+                                          <Upload className="w-5 h-5 text-gray-300" />
+                                        )}
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-4">
+                                          <input 
+                                            type="text" 
+                                            placeholder="Dán link ảnh vào đây ✨"
+                                            className="w-full px-4 py-2 rounded-lg bg-white text-[10px] font-bold outline-none text-gray-800"
+                                            onBlur={(e) => {
+                                              if (e.target.value) {
+                                                const url = cleanImageUrl(e.target.value);
+                                                const newOpts = [...(editingProduct.options || [])];
+                                                const images = { ...(newOpts[idx].images || {}) };
+                                                images[val] = url;
+                                                newOpts[idx] = { ...newOpts[idx], images };
+                                                setEditingProduct({...editingProduct, options: newOpts});
+                                                e.target.value = ""; // Reset
+                                              }
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                const valInput = (e.target as HTMLInputElement).value;
+                                                if (valInput) {
+                                                  const url = cleanImageUrl(valInput);
+                                                  const newOpts = [...(editingProduct.options || [])];
+                                                  const images = { ...(newOpts[idx].images || {}) };
+                                                  images[val] = url;
+                                                  newOpts[idx] = { ...newOpts[idx], images };
+                                                  setEditingProduct({...editingProduct, options: newOpts});
+                                                  (e.target as HTMLInputElement).value = "";
+                                                }
+                                              }
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+                                      {opt.images?.[val] && (
+                                        <button 
+                                          type="button"
+                                          onClick={() => {
+                                            const newOpts = [...(editingProduct.options || [])];
+                                            const images = { ...(newOpts[idx].images || {}) };
+                                            delete images[val];
+                                            newOpts[idx] = { ...newOpts[idx], images };
+                                            setEditingProduct({...editingProduct, options: newOpts});
+                                          }}
+                                          className="absolute top-2 right-2 p-1.5 bg-red-100 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                         <button 
@@ -2023,33 +2409,24 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Mô tả ngắn</label>
-                        <textarea 
-                          required
-                          value={editingProduct.description}
-                          onChange={e => setEditingProduct({...editingProduct, description: e.target.value})}
-                          className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-24 resize-none"
-                          placeholder="Mô tả ngắn gọn về sản phẩm..."
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Chi tiết sản phẩm (Thông tin chi tiết)</label>
-                        <textarea 
-                          value={editingProduct.details || ""}
-                          onChange={e => setEditingProduct({...editingProduct, details: e.target.value})}
-                          className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold h-48 resize-none"
-                          placeholder="Thông số kỹ thuật, cách sử dụng, cam kết của shop..."
-                        />
-                      </div>
-                    </div>
-                    <div className="flex gap-4 pt-6">
-                      <button type="button" onClick={() => {
+                    <div className="flex flex-col sm:flex-row gap-6 pt-10 border-t border-gray-100">
+                      <button 
+                        type="button" 
+                        onClick={() => {
                           setEditingProduct(null);
                           setRawProductOptions([]);
-                        }} className="flex-grow py-4 rounded-2xl bg-gray-100 text-gray-500 font-black">Hủy</button>
-                      <button type="submit" className="flex-grow btn-primary">Lưu sản phẩm ✨</button>
+                        }} 
+                        className="flex-1 py-6 rounded-[2rem] bg-gray-50 text-gray-400 font-black text-xl hover:bg-gray-100 transition-all font-sans"
+                      >
+                        Hủy bỏ 🐾
+                      </button>
+                      <button 
+                        type="submit" 
+                        className="flex-[2.5] py-6 rounded-[2rem] btn-primary text-xl shadow-2xl shadow-primary-dark/30 relative overflow-hidden group font-sans"
+                      >
+                        <span className="relative z-10">{editingProduct.id ? "Lưu thay đổi ✨" : "Thêm sản phẩm ✨"}</span>
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                      </button>
                     </div>
                   </form>
                 </motion.div>
@@ -2380,11 +2757,11 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-grow">
         {productPage ? (
-          <section className="py-12 bg-white">
+          <section className="py-8 bg-white">
             <div className="max-w-[1400px] mx-auto px-6">
               <button 
                 onClick={() => setProductPage(null)}
-                className="flex items-center gap-2 text-gray-500 hover:text-primary-dark font-bold mb-8 transition-colors group"
+                className="flex items-center gap-2 text-gray-500 hover:text-primary-dark font-bold mb-6 transition-colors group"
               >
                 <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-primary-light transition-colors">
                   <ChevronRight className="w-4 h-4 rotate-180" />
@@ -2392,94 +2769,165 @@ export default function App() {
                 Quay lại
               </button>
 
-              <div className="flex flex-col lg:flex-row gap-12">
+              <div className="flex flex-col lg:flex-row gap-8">
                 {/* Image Gallery Column */}
-                <div className="lg:w-1/2 space-y-6">
-                  <div className="aspect-square rounded-[3rem] overflow-hidden bg-gray-50 border-2 border-gray-50 shadow-sm relative group">
-                    <motion.img 
-                      key={selectedQuickViewImage || productPage.image}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      src={cleanImageUrl(selectedQuickViewImage || productPage.image)} 
-                      alt={productPage.name} 
-                      className="w-full h-full object-contain p-8"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi-detail/800/800";
-                      }}
-                    />
-                    
-                    <div className="absolute top-6 left-6 flex flex-col gap-3">
-                      {productPage.isFlashSale && (
-                        <span className="bg-red-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl flex items-center gap-2">
-                          <Zap className="w-3 h-3 fill-current" /> Đang Sale
-                        </span>
-                      )}
-                      {productPage.isNew && (
-                        <span className="bg-primary-dark text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl">Hàng Mới</span>
-                      )}
+                <div className="lg:w-1/2 space-y-8">
+                  <div className="space-y-4">
+                    <div className="aspect-square rounded-[3rem] overflow-hidden bg-gray-50 border-2 border-gray-50 shadow-sm relative group">
+                      <button 
+                        onClick={() => {
+                          const imgs = [productPage.image, ...(productPage.images || [])];
+                          setProductPageImageIndex(prev => (prev - 1 + imgs.length) % imgs.length);
+                          setSelectedQuickViewImage(null);
+                        }}
+                        className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-gray-800 shadow-xl opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-white"
+                      >
+                        <ChevronRight className="w-6 h-6 rotate-180" />
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          const imgs = [productPage.image, ...(productPage.images || [])];
+                          setProductPageImageIndex(prev => (prev + 1) % imgs.length);
+                          setSelectedQuickViewImage(null);
+                        }}
+                        className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-gray-800 shadow-xl opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-white"
+                      >
+                        <ChevronRight className="w-6 h-6" />
+                      </button>
+
+                      <div className="w-full h-full relative overflow-hidden">
+                        <AnimatePresence mode="wait">
+                          {(() => {
+                            const allImgs = [productPage.image, ...(productPage.images || [])];
+                            const currentImg = selectedQuickViewImage || allImgs[productPageImageIndex % allImgs.length];
+                            return (
+                              <motion.img 
+                                key={currentImg}
+                                initial={{ opacity: 0, scale: 1.1, filter: 'blur(10px)' }}
+                                animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                                exit={{ opacity: 0, scale: 0.95, filter: 'blur(5px)' }}
+                                transition={{ 
+                                  duration: 0.6, 
+                                  ease: [0.33, 1, 0.68, 1] 
+                                }}
+                                src={cleanImageUrl(currentImg)} 
+                                alt={productPage.name} 
+                                className="w-full h-full object-contain p-8 select-none absolute inset-0"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "https://picsum.photos/seed/hanachibi-detail/800/800";
+                                }}
+                              />
+                            );
+                          })()}
+                        </AnimatePresence>
+                      </div>
+                      
+                      <div className="absolute top-6 left-6 flex flex-col gap-3">
+                        {productPage.isFlashSale && (
+                          <span className="bg-red-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl flex items-center gap-2">
+                            <Zap className="w-3 h-3 fill-current" /> Đang Sale
+                          </span>
+                        )}
+                        {productPage.isNew && (
+                          <span className="bg-primary-dark text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-xl">Hàng Mới</span>
+                        )}
+                      </div>
+
+                      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 overflow-hidden px-4 py-2 bg-black/10 backdrop-blur-md rounded-full">
+                        {[productPage.image, ...(productPage.images || [])].map((img, i) => (
+                          <div key={i} className={`w-2 h-2 rounded-full transition-all ${ (selectedQuickViewImage || [productPage.image, ...(productPage.images || [])][productPageImageIndex % [productPage.image, ...(productPage.images || [])].length]) === img ? 'w-6 bg-primary-dark' : 'bg-white'}`} />
+                        ))}
+                      </div>
                     </div>
+
+                    {/* Thumbnails (Classification Images Only) */}
+                    {(() => {
+                      const classificationImages = (productPage.options || []).flatMap(opt => Object.values(opt.images || {}) as string[]);
+                      if (classificationImages.length === 0) return null;
+                      return (
+                        <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
+                          {classificationImages.map((img, idx) => (
+                            <button 
+                              key={idx}
+                              onClick={() => {
+                                setSelectedQuickViewImage(img);
+                                setProductPageImageIndex(0); // Stop auto-slide focus
+                              }}
+                              className={`w-24 h-24 rounded-2xl overflow-hidden border-2 flex-shrink-0 transition-all ${selectedQuickViewImage === img ? 'border-primary-dark shadow-lg scale-105' : 'border-gray-100 hover:border-primary-light'}`}
+                            >
+                              <img src={cleanImageUrl(img)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
 
-                  {/* Thumbnails */}
-                  {(productPage.images && productPage.images.length > 0) && (
-                    <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
-                      {[productPage.image, ...productPage.images.filter(img => img !== productPage.image)].map((img, idx) => (
-                        <button 
-                          key={idx}
-                          onClick={() => setSelectedQuickViewImage(img)}
-                          className={`w-24 h-24 rounded-2xl overflow-hidden border-2 flex-shrink-0 transition-all ${selectedQuickViewImage === img ? 'border-primary-dark shadow-lg scale-105' : 'border-gray-100 hover:border-primary-light'}`}
-                        >
-                          <img src={cleanImageUrl(img)} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Trust Badges */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-8">
-                    {[
-                      { icon: ShieldCheck, text: "Chính hãng 100%", sub: "Cam kết chất lượng" },
-                      { icon: Truck, text: "Giao hàng nhanh", sub: "Khắp cả nước" },
-                      { icon: RotateCcw, text: "Đổi trả dễ dàng", sub: "Trong 7 ngày" }
-                    ].map((badge, i) => (
-                      <div key={i} className="flex flex-col items-center text-center p-4 bg-gray-50 rounded-[2rem] border border-gray-100">
-                        <badge.icon className="w-6 h-6 text-primary-dark mb-2" />
-                        <span className="text-[10px] font-black text-gray-900 uppercase tracking-tighter mb-1">{badge.text}</span>
-                        <span className="text-[8px] font-bold text-gray-400">{badge.sub}</span>
+                  {/* Description and Details Moved here */}
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-black text-gray-900 border-l-4 border-primary-dark pl-3 uppercase tracking-wider">Mô tả sản phẩm</h3>
+                      <div className="bg-white p-6 rounded-[2rem] border-2 border-primary-light/20 shadow-sm relative overflow-hidden group">
+                        <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary-light/10 rounded-full blur-3xl group-hover:bg-primary-light/20 transition-all" />
+                        <p className="text-gray-700 font-bold leading-relaxed text-base whitespace-pre-wrap">
+                          {productPage.description}
+                        </p>
                       </div>
-                    ))}
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-black text-gray-900 border-l-4 border-primary-dark pl-3 uppercase tracking-wider">Thông số chi tiết</h3>
+                      {productPage.details ? (
+                         <div className="bg-white rounded-[2rem] p-6 border-2 border-primary-light/20 shadow-sm relative overflow-hidden">
+                           <div className="absolute top-0 left-0 w-2 h-full bg-primary-dark opacity-10" />
+                           <div className="text-base text-gray-700 whitespace-pre-wrap leading-relaxed font-bold pl-4">
+                             {productPage.details}
+                           </div>
+                         </div>
+                      ) : (
+                        <div className="py-12 text-center bg-gray-50 rounded-[2.5rem] border-4 border-dashed border-white text-gray-400 font-bold italic">
+                          Báo Hồng đang cập nhật thông số... Sẽ sớm thôi ạ! ~ 🌸
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Info Column */}
                 <div className="lg:w-1/2 flex flex-col">
-                  <div className="flex items-center gap-3 mb-4">
+                  <div className="flex items-center gap-3 mb-3">
                     <span className="px-3 py-1 bg-primary-light/30 text-primary-dark text-[10px] font-black uppercase tracking-widest rounded-lg">
                       {categories.find(c => c.id === productPage.category)?.name}
                     </span>
                     <span className="text-gray-400 font-bold text-xs">Thương hiệu: <span className="text-gray-900">{productPage.brand || "HanaChiBi"}</span></span>
                   </div>
 
-                  <h1 className="text-3xl md:text-5xl text-gray-900 mb-6 leading-[1.1] product-name-elegant">{productPage.name}</h1>
+                  <h1 className="text-2xl md:text-4xl text-gray-900 mb-3 leading-[1.1] font-sans font-black tracking-tighter">{productPage.name}</h1>
                   
-                  <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
-                    <div className="flex items-center gap-1">
-                      {[1,2,3,4,5].map(s => <Star key={s} className="w-4 h-4 fill-yellow-400 text-yellow-400" />)}
-                      <span className="text-sm font-bold text-gray-400 ml-2">4.9 (128 đánh giá)</span>
-                    </div>
+                  <div className="flex items-center gap-6 mb-4 pb-4 border-b border-gray-100">
+                    <button 
+                      onClick={() => {
+                        document.getElementById('product-reviews')?.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      className="flex items-center gap-1 hover:opacity-70 transition-opacity"
+                    >
+                      {[1,2,3,4,5].map(s => <Star key={s} className="w-3 h-3 fill-yellow-400 text-yellow-400" />)}
+                      <span className="text-xs font-bold text-gray-400 ml-2">4.9 ({productPage.reviewsList?.length || 0} đánh giá)</span>
+                    </button>
                     <div className="h-4 w-[1px] bg-gray-200" />
-                    <span className="text-sm font-bold text-gray-400">Đã bán: <span className="text-gray-900 font-black">{productPage.soldCount || 0}</span></span>
+                    <span className="text-xs font-bold text-gray-400">Đã bán: <span className="text-gray-900 font-black">{productPage.soldCount || 0}</span></span>
                   </div>
 
-                  <div className="bg-gray-50 rounded-[2.5rem] p-8 mb-8 border border-gray-100">
-                    <div className="flex items-baseline gap-4 mb-4">
-                      <span className="text-5xl font-black text-primary-dark tracking-tighter">
-                        {(productPage.price * productPageQuantity).toLocaleString('vi-VN')}đ
+                  <div className="bg-gray-50 rounded-[2rem] p-6 mb-4 border border-gray-100">
+                    <div className="flex items-baseline gap-4 mb-2">
+                      <span className="text-4xl font-black text-primary-dark tracking-tighter">
+                        {((productPage.purchaseMode === 'combo' && productPage.combos?.length ? (productPage.price * (productPageOptions['Combo'] ? parseInt(productPageOptions['Combo']) / Math.min(...productPage.combos) : 1)) : productPage.price) * productPageQuantity).toLocaleString('vi-VN')}đ
                       </span>
                       {productPage.originalPrice && (
-                        <span className="text-xl text-gray-300 line-through font-bold">
-                          {productPage.originalPrice.toLocaleString('vi-VN')}đ
+                        <span className="text-lg text-gray-300 line-through font-bold">
+                          {((productPage.purchaseMode === 'combo' && productPage.combos?.length ? (productPage.originalPrice * (productPageOptions['Combo'] ? parseInt(productPageOptions['Combo']) / Math.min(...productPage.combos) : 1)) : productPage.originalPrice) * productPageQuantity).toLocaleString('vi-VN')}đ
                         </span>
                       )}
                       {productPage.originalPrice && (
@@ -2488,44 +2936,70 @@ export default function App() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 text-xs font-bold text-green-600 bg-green-50 px-4 py-2 rounded-xl border border-green-100 w-fit">
-                      <Zap className="w-4 h-4 fill-current" /> Tiết kiệm tới {(productPage.originalPrice || 0) - productPage.price > 0 ? ((productPage.originalPrice || 0) - productPage.price).toLocaleString('vi-VN') + 'đ' : 'cho bạn'}!
+                    {productPage.purchaseMode === 'combo' && (
+                      <p className="text-[10px] font-bold text-gray-400 italic mb-1 uppercase tracking-widest">* Giá combo thay đổi theo số lượng trong combo ✨</p>
+                    )}
+                    <div className="flex items-center gap-2 text-[10px] font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-xl border border-green-100 w-fit">
+                      <Zap className="w-3 h-3 fill-current" /> Tiết kiệm ngay tới {((productPage.originalPrice || 0) - productPage.price > 0 ? ((productPage.originalPrice || 0) - productPage.price).toLocaleString('vi-VN') + 'đ' : 'cho bạn')}!
                     </div>
                   </div>
 
                   {/* Options */}
-                  {productPage.options && productPage.options.length > 0 && (
-                    <div className="space-y-6 mb-8">
-                      {productPage.options.map(opt => (
-                        <div key={opt.name} className="space-y-3">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest block ml-2">Chọn {opt.name}</label>
+                  <div className="space-y-4 mb-4">
+                    {productPage.purchaseMode === 'combo' && productPage.combos?.length && (
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2">Chọn COMBO ✨</label>
+                        <div className="flex flex-wrap gap-2">
+                          {productPage.combos.sort((a,b) => a-b).map(c => (
+                            <button 
+                              key={c}
+                              onClick={() => setProductPageOptions(prev => ({...prev, 'Combo': c.toString()}))}
+                              className={`px-4 py-2.5 rounded-xl text-[10px] font-black transition-all border-2 ${productPageOptions['Combo'] === c.toString() ? 'bg-primary-dark text-white border-primary-dark shadow-lg scale-105' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light hover:bg-primary-light/10'}`}
+                            >
+                              Combo {c}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {productPage.options && productPage.options.length > 0 && (
+                      productPage.options.map((opt, oIdx) => (
+                        <div key={oIdx} className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2">Chọn {opt.name}</label>
                           <div className="flex flex-wrap gap-2">
                             {opt.values.map(val => (
                               <button 
                                 key={val}
-                                onClick={() => setProductPageOptions(prev => ({...prev, [opt.name]: val}))}
-                                className={`px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 ${productPageOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark shadow-xl scale-105' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light hover:bg-primary-light/10'}`}
+                                onClick={() => {
+                                  setProductPageOptions(prev => ({...prev, [opt.name]: val}));
+                                  // Update image if variation has one
+                                  if (opt.images?.[val]) {
+                                    setSelectedQuickViewImage(opt.images[val]);
+                                  }
+                                }}
+                                className={`px-4 py-2.5 rounded-xl text-[10px] font-black transition-all border-2 ${productPageOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark shadow-lg scale-105' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light hover:bg-primary-light/10'}`}
                               >
                                 {val}
                               </button>
                             ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      ))
+                    )}
+                  </div>
 
                   {/* Quantity and Actions */}
-                  <div className="space-y-6 bg-white p-8 rounded-[3rem] border-2 border-gray-50 shadow-sm mb-8">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2 italic">Số lượng cần mua</label>
+                  <div className="space-y-5 bg-white p-6 rounded-[2.5rem] border-2 border-gray-50 shadow-sm mb-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-2 italic">Số lượng cần mua</label>
                         <div className="flex items-center bg-gray-50 rounded-2xl p-1 border border-gray-100">
                           <button 
                             onClick={() => setProductPageQuantity(q => Math.max(productPage.minQuantity || 1, q - 1))}
-                            className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
+                            className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
                           >
-                            <Minus className="w-5 h-5" />
+                            <Minus className="w-4 h-4" />
                           </button>
                           <input 
                             type="number"
@@ -2534,28 +3008,28 @@ export default function App() {
                               const v = parseInt(e.target.value);
                               if (!isNaN(v)) setProductPageQuantity(Math.max(productPage.minQuantity || 1, v));
                             }}
-                            className="w-16 text-center bg-transparent font-black text-xl focus:outline-none"
+                            className="w-14 text-center bg-transparent font-black text-lg focus:outline-none"
                           />
                           <button 
                             onClick={() => setProductPageQuantity(q => q + 1)}
-                            className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
+                            className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-primary-dark transition-colors"
                           >
-                            <Plus className="w-5 h-5" />
+                            <Plus className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
                       
                       {productPage.minQuantity && productPage.minQuantity > 1 && (
-                        <div className="flex items-center gap-3 px-6 py-4 bg-primary-light/20 rounded-[2rem] border border-primary-light/50">
-                          <Info className="w-5 h-5 text-primary-dark" />
-                          <p className="text-xs font-black text-primary-dark uppercase italic leading-tight">
-                            Sản phẩm này yêu cầu <br /> mua tối thiểu {productPage.minQuantity} cái
+                        <div className="flex items-center gap-2.5 px-5 py-3 bg-primary-light/20 rounded-[1.5rem] border border-primary-light/50">
+                          <Info className="w-4 h-4 text-primary-dark" />
+                          <p className="text-[10px] font-black text-primary-dark uppercase italic leading-tight">
+                            Sản phẩm này yêu cầu mua tối thiểu {productPage.minQuantity} cái
                           </p>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex flex-col sm:flex-row gap-3">
                       <button 
                          onClick={() => {
                            if (productPage.options?.some(opt => !productPageOptions[opt.name])) {
@@ -2564,9 +3038,9 @@ export default function App() {
                            }
                            addToCart(productPage, productPageOptions, productPageQuantity);
                          }}
-                         className="flex-grow py-5 bg-white border-2 border-primary-dark text-primary-dark rounded-[2rem] font-black uppercase tracking-widest hover:bg-primary-light/20 transition-all flex items-center justify-center gap-3 active:scale-95 shadow-sm"
+                         className="flex-grow py-3.5 bg-white border-2 border-primary-dark text-primary-dark rounded-[1.5rem] font-black uppercase tracking-widest hover:bg-primary-light/20 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm text-xs"
                       >
-                        <ShoppingBag className="w-5 h-5" /> Thêm vào giỏ
+                        <ShoppingBag className="w-4 h-4" /> Thêm vào giỏ
                       </button>
                       <button 
                          onClick={() => {
@@ -2576,39 +3050,150 @@ export default function App() {
                            }
                            handleBuyNow(productPage, productPageOptions, productPageQuantity);
                          }}
-                         className="flex-grow py-5 bg-primary-dark text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl active:scale-95"
+                         className="flex-grow py-3.5 bg-primary-dark text-white rounded-[1.5rem] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl active:scale-95 text-xs"
                       >
                         Mua ngay ✨
                       </button>
                     </div>
-                  </div>
 
-                  {/* Tabs / Info Sections */}
-                  <div className="space-y-8">
-                    <div className="border-b border-gray-100 flex gap-8 overflow-x-auto no-scrollbar">
-                      {["Mô tả", "Chi tiết", "Đánh giá"].map(tab => (
-                        <button key={tab} className={`pb-4 text-sm font-black uppercase tracking-widest border-b-4 transition-all ${tab === "Mô tả" ? "border-primary-dark text-primary-dark" : "border-transparent text-gray-400"}`}>
-                          {tab}
-                        </button>
+                    {/* Trust Badges Compact */}
+                    <div className="pt-4 border-t border-gray-50 grid grid-cols-3 gap-2">
+                      {[
+                        { icon: ShieldCheck, text: "Chính hãng", color: "text-blue-500" },
+                        { icon: Truck, text: "Giao nhanh", color: "text-green-500" },
+                        { icon: RotateCcw, text: "Đổi trả 7 ngày", color: "text-orange-500" }
+                      ].map((badge, i) => (
+                        <div key={i} className="flex items-center gap-2 p-2 bg-gray-50/50 rounded-xl border border-gray-100 shadow-sm">
+                          <badge.icon className={`w-3 h-3 ${badge.color}`} />
+                          <span className="text-[9px] font-black text-gray-700 uppercase tracking-tighter truncate">{badge.text}</span>
+                        </div>
                       ))}
                     </div>
 
-                    <div className="space-y-6">
-                      <p className="text-gray-500 font-medium leading-relaxed">
-                        {productPage.description}
-                      </p>
-                      
-                      {productPage.details && (
-                        <div className="bg-gray-50 rounded-[2.5rem] p-8 border border-gray-100">
-                          <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-4">Thông tin kỹ thuật</h4>
-                          <div className="text-sm text-gray-500 whitespace-pre-wrap leading-relaxed font-bold">
-                            {productPage.details}
+                    {/* Reviews Moved here */}
+                    <div id="product-reviews" className="mt-8 space-y-6">
+                        <h3 className="text-lg font-black text-gray-900 border-l-4 border-primary-dark pl-3 uppercase tracking-wider">Đánh giá từ khách hàng</h3>
+                        
+                        {/* Write Review Section */}
+                        <div className="bg-white p-6 rounded-[2rem] border-2 border-primary-light/10 shadow-sm space-y-5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-primary-light/30 rounded-xl flex items-center justify-center text-primary-dark">
+                              <Star className="w-5 h-5 fill-current" />
+                            </div>
+                            <h4 className="text-base font-black text-gray-900">Gửi lời yêu thương 🎀</h4>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-2xl w-fit">
+                              {[1,2,3,4,5].map(s => (
+                                <button key={s} onClick={() => setReviewRating(s)} className={`p-1.5 rounded-lg transition-all ${reviewRating >= s ? 'bg-yellow-400 text-white shadow-md' : 'bg-white text-gray-300'}`}>
+                                  <Star className={`w-4 h-4 ${reviewRating >= s ? 'fill-current' : ''}`} />
+                                </button>
+                              ))}
+                            </div>
+                            
+                            <div className="relative group">
+                              <textarea 
+                                value={reviewComment}
+                                onChange={e => setReviewComment(e.target.value)}
+                                placeholder="Nhập cảm nhận của bạn nhé... ✨"
+                                className="w-full px-6 py-4 rounded-3xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold h-24 resize-none transition-all shadow-sm text-sm"
+                              />
+                            </div>
+                            
+                            <div className="flex flex-col gap-4">
+                              <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                {reviewImages.map((img, i) => (
+                                  <div key={i} className="relative w-16 h-16 rounded-xl border border-gray-100 overflow-hidden shrink-0 shadow-sm">
+                                    <img src={cleanImageUrl(img)} className="w-full h-full object-cover" />
+                                    <button onClick={() => setReviewImages(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 p-1 bg-red-500 text-white rounded-bl-lg">
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                                <div className="relative w-16 h-16 rounded-xl bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 hover:border-primary transition-all shrink-0">
+                                  {isUploading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                  <input 
+                                    type="file" 
+                                    accept="image/*" 
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        setIsUploading(true);
+                                        try {
+                                          const url = await uploadImage(file, "reviews");
+                                          setReviewImages(prev => [...prev, url]);
+                                        } finally {
+                                          setIsUploading(false);
+                                        }
+                                      }
+                                    }}
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                  />
+                                </div>
+                              </div>
+                              <button 
+                                onClick={handleSubmitReview}
+                                disabled={!user || !reviewRating || !reviewComment}
+                                className="w-full py-4 btn-primary shadow-xl disabled:opacity-50 text-sm"
+                              >
+                                Gửi đánh giá ngay ✨
+                              </button>
+                            </div>
+                            {!user && <p className="text-[10px] text-center text-red-400 font-black uppercase tracking-widest italic flex items-center justify-center gap-2">
+                              <Info className="w-3 h-3" /> Bạn cần đăng nhập nhé 🐾
+                            </p>}
                           </div>
                         </div>
-                      )}
+
+                        {/* Recent Reviews List */}
+                        <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                          {(productPage.reviewsList || []).length > 0 ? (
+                            productPage.reviewsList.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(review => (
+                              <div key={review.id} className="p-6 bg-white rounded-3xl border border-gray-50 shadow-sm space-y-4">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-primary-light/50 rounded-full flex items-center justify-center text-primary-dark font-black shadow-sm border-2 border-white text-sm">
+                                      {review.userName.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <p className="font-black text-gray-900 text-xs">{review.userName}</p>
+                                      <div className="flex items-center gap-1 mt-0.5">
+                                        {[...Array(5)].map((_, i) => (
+                                          <Star key={i} className={`w-3 h-3 ${i < review.rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-100'}`} />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] font-bold text-gray-300 italic">{new Date(review.createdAt).toLocaleDateString('vi-VN')}</span>
+                                </div>
+                                <p className="text-gray-600 font-bold leading-relaxed italic text-sm">"{review.comment}"</p>
+                                {review.images && review.images.length > 0 && (
+                                  <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                    {review.images.map((img, i) => (
+                                      <div key={i} className="w-16 h-16 rounded-xl overflow-hidden border border-gray-50 shadow-sm shrink-0">
+                                        <img src={cleanImageUrl(img)} className="w-full h-full object-cover" />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-20 text-center space-y-4 bg-gray-50 rounded-[3rem] border-2 border-dashed border-white">
+                              <Sparkles className="w-10 h-10 animate-pulse mx-auto text-primary-light" />
+                              <p className="text-gray-400 font-black italic uppercase tracking-widest text-[10px]">Chưa có đánh giá nào... ✨</p>
+                            </div>
+                          )}
+                        </div>
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Related Products Section or other content */}
+              <div className="mt-20">
+                {/* Potentially Add Related Products here */}
               </div>
             </div>
           </section>
@@ -3107,7 +3692,7 @@ export default function App() {
                           setProductPage(product);
                           setProductPageQuantity(product.minQuantity || 1);
                           setProductPageOptions({});
-                          setSelectedQuickViewImage(product.image);
+                          setSelectedQuickViewImage(null); // Reset to allow auto-slide to start
                           window.scrollTo(0, 0);
                         }}
                       >
@@ -3158,7 +3743,7 @@ export default function App() {
                             setProductPage(product);
                             setProductPageQuantity(product.minQuantity || 1);
                             setProductPageOptions({});
-                            setSelectedQuickViewImage(product.image);
+                            setSelectedQuickViewImage(null); // Reset to allow auto-slide to start
                             window.scrollTo(0, 0);
                           }}
                         >
@@ -3276,12 +3861,12 @@ export default function App() {
         {showLogin && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowLogin(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }} 
-              animate={{ scale: 1, opacity: 1 }} 
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="relative w-full max-w-md bg-white rounded-[3rem] shadow-2xl p-10 overflow-hidden"
-            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="relative w-full max-w-sm bg-white rounded-[3rem] shadow-2xl p-8 max-h-[90vh] overflow-y-auto custom-scrollbar"
+              >
               <button onClick={() => setShowLogin(false)} className="absolute top-6 right-6 p-2 hover:bg-gray-100 rounded-full transition-all">
                 <X className="w-6 h-6" />
               </button>
@@ -3298,56 +3883,85 @@ export default function App() {
                     />
                   </div>
                 </div>
-                <h3 className="text-3xl font-black text-gray-900">{authMode === 'login' ? 'Chào mừng trở lại!' : 'Tạo tài khoản mới'}</h3>
+                <h3 className="text-2xl font-black text-gray-900">{authMode === 'login' ? 'Chào mừng trở lại!' : 'Tạo tài khoản mới ✨'}</h3>
                 <p className="text-gray-400 font-bold mt-2">{authMode === 'login' ? settings.mascotText : 'Tham gia cộng đồng HanaChiBi ngay hôm nay! 🐾'}</p>
               </div>
-              <form className="space-y-6" onSubmit={handleAuth}>
+              <form className="space-y-4" onSubmit={handleAuth}>
                 {authMode === 'register' && (
-                  <div>
-                    <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-4">Họ và tên</label>
-                    <input 
-                      type="text" 
-                      required
-                      value={loginForm.name}
-                      onChange={e => setLoginForm({...loginForm, name: e.target.value})}
-                      className="w-full px-6 py-4 rounded-full bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all" 
-                      placeholder="Nguyễn Văn A" 
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Họ và tên</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={loginForm.name}
+                        onChange={e => setLoginForm({...loginForm, name: e.target.value})}
+                        className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm" 
+                        placeholder="Nguyễn Văn A" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Số điện thoại</label>
+                      <input 
+                        type="tel" 
+                        required
+                        value={loginForm.phone || ""}
+                        onChange={e => setLoginForm({...loginForm, phone: e.target.value})}
+                        className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm" 
+                        placeholder="039xxxxxxx" 
+                      />
+                    </div>
                   </div>
                 )}
                 <div>
-                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-4">Email / Số điện thoại</label>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">
+                    {authMode === 'login' ? 'Đăng nhập bằng Email' : 'Email'}
+                  </label>
                   <input 
-                    type="text" 
+                    type="email" 
                     required
                     value={loginForm.email}
                     onChange={e => setLoginForm({...loginForm, email: e.target.value})}
-                    className="w-full px-6 py-4 rounded-full bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all" 
-                    placeholder="Nhập thông tin của bạn..." 
+                    className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm" 
+                    placeholder="example@gmail.com" 
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-4">Mật khẩu</label>
+                <div className="relative">
+                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Mật khẩu</label>
                   <input 
-                    type="password" 
+                    type={showPassword ? "text" : "password"} 
                     required
                     value={loginForm.password}
                     onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-                    className="w-full px-6 py-4 rounded-full bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all" 
+                    className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm pr-12" 
                     placeholder="••••••••" 
                   />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 bottom-3.5 text-gray-400 hover:text-primary-dark transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
                 </div>
                 {authMode === 'register' && (
-                  <div>
-                    <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-4">Xác nhận mật khẩu</label>
+                  <div className="relative">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-4">Xác nhận mật khẩu</label>
                     <input 
-                      type="password" 
+                      type={showConfirmPassword ? "text" : "password"} 
                       required 
                       value={loginForm.confirmPassword}
                       onChange={e => setLoginForm({...loginForm, confirmPassword: e.target.value})}
-                      className="w-full px-6 py-4 rounded-full bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all" 
+                      className="w-full px-6 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold transition-all text-sm pr-12" 
                       placeholder="••••••••" 
                     />
+                    <button 
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-4 bottom-3.5 text-gray-400 hover:text-primary-dark transition-colors"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
                   </div>
                 )}
                 
@@ -3572,7 +4186,19 @@ export default function App() {
               </button>
               <div className="md:w-1/2 bg-gray-50 flex flex-col">
                 <div className="flex-grow relative overflow-hidden bg-white flex items-center justify-center min-h-[300px]">
-                  <img src={cleanImageUrl(selectedQuickViewImage || quickViewProduct.image)} alt={quickViewProduct.name} className="max-w-full max-h-full object-contain" />
+                  <AnimatePresence mode="wait">
+                    <motion.img 
+                      key={selectedQuickViewImage || quickViewProduct.image}
+                      initial={{ opacity: 0, scale: 1.1 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+                      src={cleanImageUrl(selectedQuickViewImage || quickViewProduct.image)} 
+                      alt={quickViewProduct.name} 
+                      className="max-w-full max-h-full object-contain absolute" 
+                      referrerPolicy="no-referrer"
+                    />
+                  </AnimatePresence>
                 </div>
                 {quickViewProduct.images && quickViewProduct.images.length > 0 && (
                   <div className="flex gap-2 p-4 bg-gray-50/50 backdrop-blur-sm overflow-x-auto custom-scrollbar border-t border-gray-100">
@@ -3588,50 +4214,36 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <div className="md:w-1/2 p-10 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar">
-                <div className="flex justify-between items-start mb-4">
-                  <span className="text-primary-dark font-black uppercase text-xs tracking-widest">
-                    {categories.find(c => c.id === quickViewProduct.category)?.name}
-                  </span>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-tighter text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
-                       <Zap className="w-3 h-3 fill-gray-400" /> Còn {quickViewProduct.totalStock || 0}
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-tighter text-primary-dark bg-primary-light/20 px-3 py-1 rounded-full">
-                       <Sparkles className="w-3 h-3 fill-primary-dark" /> Đã bán {quickViewProduct.soldCount || 0}
-                    </div>
-                  </div>
-                </div>
-                <h3 className="text-2xl text-gray-900 mb-4 leading-tight product-name-elegant">{quickViewProduct.name}</h3>
-                <div className="flex items-center gap-2 mb-6">
-                  <div className="flex">
-                    {[...Array(5)].map((_, i) => <Star key={i} className="w-4 h-4 fill-pastel-yellow text-pastel-yellow" />)}
-                  </div>
-                  <span className="text-sm text-gray-400 font-bold">{quickViewProduct.reviews} đánh giá</span>
-                </div>
+              <div className="md:w-1/2 p-6 md:p-8 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar">
+                  <h3 className="text-xl md:text-2xl text-gray-900 mb-2 font-sans font-black tracking-tight">{quickViewProduct.name}</h3>
                 
-                <div className="flex items-baseline gap-4 mb-8">
-                  <div className="text-4xl font-black text-primary-dark">
-                    {(quickViewProduct.price * quickViewQuantity).toLocaleString('vi-VN')}đ
+                <div className="flex items-baseline gap-3 mb-4">
+                  <div className="text-3xl md:text-4xl font-black text-primary-dark">
+                    {(quickViewProduct.price * quickViewQuantity * (quickViewProduct.purchaseMode === 'combo' && quickViewOptions['Combo'] ? parseInt(quickViewOptions['Combo']) / Math.min(...(quickViewProduct.combos || [1])) : 1)).toLocaleString('vi-VN')}đ
                   </div>
                   {quickViewProduct.originalPrice && (
-                    <div className="text-lg font-bold text-gray-300 line-through">
-                      {quickViewProduct.originalPrice.toLocaleString('vi-VN')}đ
+                    <div className="text-base md:text-lg font-bold text-gray-300 line-through">
+                      {(quickViewProduct.originalPrice * quickViewQuantity * (quickViewProduct.purchaseMode === 'combo' && quickViewOptions['Combo'] ? parseInt(quickViewOptions['Combo']) / Math.min(...(quickViewProduct.combos || [1])) : 1)).toLocaleString('vi-VN')}đ
                     </div>
                   )}
                 </div>
 
                 {quickViewProduct.options && quickViewProduct.options.length > 0 && (
-                  <div className="mb-8 space-y-4">
+                  <div className="mb-4 space-y-3">
                     {quickViewProduct.options.map(opt => (
                       <div key={opt.name} className="space-y-2">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">{opt.name}</label>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{opt.name}</label>
                         <div className="flex flex-wrap gap-2">
                           {opt.values.map(val => (
                             <button 
                               key={val}
-                              onClick={() => setQuickViewOptions(prev => ({...prev, [opt.name]: val}))}
-                              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 ${quickViewOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light'}`}
+                              onClick={() => {
+                                setQuickViewOptions(prev => ({...prev, [opt.name]: val}));
+                                if (opt.images?.[val]) {
+                                  setSelectedQuickViewImage(opt.images[val]);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border-2 ${quickViewOptions[opt.name] === val ? 'bg-primary-dark text-white border-primary-dark' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light'}`}
                             >
                               {val}
                             </button>
@@ -3642,12 +4254,34 @@ export default function App() {
                   </div>
                 )}
 
-                 <div className="space-y-6 mb-10">
+                <div className="space-y-4 mb-4 bg-gray-50/50 p-6 rounded-[2rem] border border-gray-100 shadow-inner">
+                    {/* Combo Selection */}
+                    {quickViewProduct.purchaseMode === 'combo' && quickViewProduct.combos?.length && (
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                           <Sparkles className="w-3 h-3 text-primary-dark" /> Chọn gói Combo ✨
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {quickViewProduct.combos.sort((a,b) => a-b).map(c => (
+                            <button 
+                              key={c}
+                              onClick={() => setQuickViewOptions(prev => ({...prev, 'Combo': c.toString()}))}
+                               className={`px-5 py-2.5 rounded-xl text-[10px] font-black transition-all border-2 ${quickViewOptions['Combo'] === c.toString() ? 'bg-primary-dark text-white border-primary-dark shadow-md scale-105' : 'bg-white text-gray-500 border-gray-100 hover:border-primary-light'}`}
+                            >
+                              Combo {c}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Quantity Selector */}
-                    <div className="space-y-3">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Số lượng</label>
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center bg-gray-100 rounded-2xl p-1">
+                    <div className="space-y-4">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                        <User className="w-3 h-3 text-primary-dark" /> Số lượng đặt mua
+                      </label>
+                      <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center bg-white rounded-2xl p-1 border-2 border-primary-light/30 shadow-sm">
                           <button 
                             onClick={() => setQuickViewQuantity(q => Math.max(quickViewProduct.minQuantity || 1, q - 1))}
                             className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-primary-dark transition-colors"
@@ -3672,32 +4306,21 @@ export default function App() {
                         </div>
                         {quickViewProduct.minQuantity && quickViewProduct.minQuantity > 1 && (
                           <span className="text-[10px] text-primary-dark font-black px-3 py-1 bg-primary-light/20 rounded-full italic">
-                            * Mua tối thiểu {quickViewProduct.minQuantity} cái
+                            * Ít nhất {quickViewProduct.minQuantity} cái
                           </span>
                         )}
                       </div>
                     </div>
-
-                    <div className="space-y-2">
-                       <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Mô tả sản phẩm</h4>
-                      <p className="text-gray-500 leading-relaxed font-bold text-sm">
-                        {quickViewProduct.description}
-                      </p>
-                   </div>
-                   {quickViewProduct.details && (
-                     <div className="space-y-2 p-6 bg-gray-50 rounded-3xl border-2 border-gray-100">
-                        <h4 className="text-[10px] font-black text-primary-dark uppercase tracking-widest mb-3">Thông tin chi tiết</h4>
-                        <div className="text-xs text-gray-500 font-medium whitespace-pre-wrap leading-relaxed">
-                          {quickViewProduct.details}
-                        </div>
-                     </div>
-                   )}
                 </div>
-                <div className="mt-auto flex gap-4">
+                <div className="mt-auto flex flex-col sm:flex-row gap-4">
                   <button 
                     onClick={() => { 
                       if (quickViewProduct.options?.some(opt => !quickViewOptions[opt.name])) {
                         showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                        return;
+                      }
+                      if (quickViewProduct.purchaseMode === 'combo' && !quickViewOptions['Combo']) {
+                        showAlert("Vui lòng chọn gói Combo nhé! 🌸", "info");
                         return;
                       }
                       addToCart(quickViewProduct, quickViewOptions, quickViewQuantity); 
@@ -3711,6 +4334,10 @@ export default function App() {
                     onClick={() => { 
                       if (quickViewProduct.options?.some(opt => !quickViewOptions[opt.name])) {
                         showAlert("Vui lòng chọn đầy đủ các phân loại nhé! 🌸", "info");
+                        return;
+                      }
+                      if (quickViewProduct.purchaseMode === 'combo' && !quickViewOptions['Combo']) {
+                        showAlert("Vui lòng chọn gói Combo nhé! 🌸", "info");
                         return;
                       }
                       handleBuyNow(quickViewProduct, quickViewOptions, quickViewQuantity);

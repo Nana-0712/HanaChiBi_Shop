@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Dancing+Script:wght@700&family=Quicksand:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Dancing+Script:wght@700&family=Quicksand:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Outfit:wght@300;400;500;600;700&display=swap');
 
 @theme {
   --color-primary: #ffb7c5;
@@ -9,9 +9,10 @@
   --color-pastel-yellow: #fff4bd;
   --color-pastel-purple: #e2d1f9;
   --color-pastel-green: #c1f0c1;
-  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Outfit", "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
   --font-script: "Dancing Script", cursive;
-  --font-elegant: "Quicksand", sans-serif;
+  --font-elegant: "Playfair Display", serif;
+  --font-quicksand: "Quicksand", sans-serif;
 }
 
 @layer base {
@@ -68,7 +69,9 @@
   }
 
   .product-name-elegant {
-    @apply font-elegant tracking-tight font-bold;
+    /* Mềm mại và thanh thoát: Serif font with italic touches or just nice serif */
+    @apply font-elegant italic tracking-tight font-medium;
+    font-style: italic;
   }
 }
 
