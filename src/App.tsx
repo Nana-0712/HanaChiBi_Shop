@@ -303,6 +303,9 @@ export default function App() {
   const [customerInfo, setCustomerInfo] = useState({ 
     name: "", 
     phone: "", 
+    province: "",
+    district: "",
+    ward: "",
     address: "", 
     note: "",
     voucher: "",
@@ -310,12 +313,72 @@ export default function App() {
     shippingMethod: "standard",
     useCoins: false
   });
-  const [user, setUser] = useState<any>(null);
+  const [provinces, setProvinces] = useState<any[]>([]);
+  const [districts, setDistricts] = useState<any[]>([]);
+  const [wards, setWards] = useState<any[]>([]);
+  const [loadingLocations, setLoadingLocations] = useState({ p: false, d: false, w: false });
+
   useEffect(() => {
-    if (user && !customerInfo.name) {
-      setCustomerInfo(prev => ({ ...prev, name: user.name || "" }));
+    const fetchProvinces = async () => {
+      setLoadingLocations(prev => ({ ...prev, p: true }));
+      try {
+        const res = await fetch('https://provinces.open-api.vn/api/p/');
+        const data = await res.json();
+        setProvinces(data);
+      } catch (err) {
+        console.error("Failed to fetch provinces", err);
+      } finally {
+        setLoadingLocations(prev => ({ ...prev, p: false }));
+      }
+    };
+    fetchProvinces();
+  }, []);
+
+  useEffect(() => {
+    if (!customerInfo.province) {
+      setDistricts([]);
+      setWards([]);
+      return;
     }
-  }, [user, customerInfo.name]);
+    const fetchDistricts = async () => {
+      const p = provinces.find(p => p.name === customerInfo.province);
+      if (!p) return;
+      setLoadingLocations(prev => ({ ...prev, d: true }));
+      try {
+        const res = await fetch(`https://provinces.open-api.vn/api/p/${p.code}?depth=2`);
+        const data = await res.json();
+        setDistricts(data.districts || []);
+      } catch (err) {
+        console.error("Failed to fetch districts", err);
+      } finally {
+        setLoadingLocations(prev => ({ ...prev, d: false }));
+      }
+    };
+    fetchDistricts();
+  }, [customerInfo.province, provinces]);
+
+  useEffect(() => {
+    if (!customerInfo.district) {
+      setWards([]);
+      return;
+    }
+    const fetchWards = async () => {
+      const d = districts.find(d => d.name === customerInfo.district);
+      if (!d) return;
+      setLoadingLocations(prev => ({ ...prev, w: true }));
+      try {
+        const res = await fetch(`https://provinces.open-api.vn/api/d/${d.code}?depth=2`);
+        const data = await res.json();
+        setWards(data.wards || []);
+      } catch (err) {
+        console.error("Failed to fetch wards", err);
+      } finally {
+        setLoadingLocations(prev => ({ ...prev, w: false }));
+      }
+    };
+    fetchWards();
+  }, [customerInfo.district, districts]);
+  const [user, setUser] = useState<any>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [hasLoadedCart, setHasLoadedCart] = useState(false);
@@ -339,7 +402,28 @@ export default function App() {
     }
   }, [cart, user?.uid, isAuthReady, hasLoadedCart]);
 
-  const decorationPositions = DECORATION_POSITIONS;
+  const [favorites, setFavorites] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('hanachibi_favorites');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('hanachibi_favorites', JSON.stringify(favorites));
+  }, [favorites]);
+
+  const toggleFavorite = (productId: number) => {
+    setFavorites(prev => 
+      prev.includes(productId) 
+        ? prev.filter(id => id !== productId) 
+        : [...prev, productId]
+    );
+  };
+
+  const decorationPositions = useRef(DECORATION_POSITIONS).current;
 
   useEffect(() => {
     let unsubscribeDoc: (() => void) | undefined;
@@ -571,10 +655,11 @@ export default function App() {
 
       const updatedReviews = [...(productPage.reviewsList || []), reviewData];
       
-      const productRef = doc(db, "products", productPage.id);
-      await updateDoc(productRef, {
+      const productRef = doc(db, "products", productPage.id.toString());
+      await setDoc(productRef, {
+        ...productPage,
         reviewsList: updatedReviews
-      });
+      }, { merge: true });
 
       setProductPage({...productPage, reviewsList: updatedReviews});
       
@@ -612,6 +697,10 @@ export default function App() {
         await signInWithEmailAndPassword(auth, loginForm.email, loginForm.password);
         showAlert("Đăng nhập thành công! ✨", "success");
       } else {
+        if (loginForm.password !== loginForm.confirmPassword) {
+          setAuthError("Mật khẩu xác nhận không khớp!");
+          return;
+        }
         const userCredential = await createUserWithEmailAndPassword(auth, loginForm.email, loginForm.password);
         await updateProfile(userCredential.user, { displayName: loginForm.name });
         
@@ -660,6 +749,11 @@ export default function App() {
       return;
     }
 
+    if (!customerInfo.name.trim() || !customerInfo.phone.trim() || !customerInfo.province || !customerInfo.district || !customerInfo.ward || !customerInfo.address.trim()) {
+      showAlert("Vui lòng điền đầy đủ Tên, Số điện thoại và Địa chỉ (Tỉnh, Huyện, Xã, Số nhà) nhé! ✨", "info");
+      return;
+    }
+
     if (customerInfo.paymentMethod === 'bank' && !showQR) {
       setShowQR(true);
       return;
@@ -687,7 +781,10 @@ export default function App() {
     try {
       const orderData = {
         userId: user.uid,
-        customer: customerInfo,
+        customer: {
+          ...customerInfo,
+          fullAddress: `${customerInfo.address}, ${customerInfo.ward}, ${customerInfo.district}, ${customerInfo.province}`
+        },
         items: itemsToOrder,
         total: finalTotal,
         discount,
@@ -721,7 +818,9 @@ export default function App() {
         setShowCheckout(false);
         setOrderStatus('idle');
         setCustomerInfo({ 
-          name: "", phone: "", address: "", note: "", 
+          name: "", phone: "", 
+          province: "", district: "", ward: "",
+          address: "", note: "", 
           voucher: "", paymentMethod: "cod", shippingMethod: "standard", useCoins: false 
         });
       }, 3000);
@@ -918,7 +1017,7 @@ export default function App() {
     });
   };
 
-  const filteredProducts = (hasLoadedProducts && liveProducts.length > 0 ? liveProducts : (hasLoadedProducts && liveProducts.length === 0 ? [] : PRODUCTS))
+  const filteredProducts = (hasLoadedProducts && liveProducts.length > 0 ? liveProducts : PRODUCTS)
     .filter(p => {
       const matchesCategory = selectedCategory === "all" || p.category === selectedCategory;
       const matchesSubCategory = selectedSubCategory === "all" || p.subCategory === selectedSubCategory;
@@ -1224,7 +1323,7 @@ export default function App() {
                             <h4 className="text-2xl font-black text-gray-900">{order.customer.name}</h4>
                             <div className="flex flex-col gap-1">
                               <p className="text-gray-500 font-bold flex items-center gap-2"><Phone className="w-4 h-4" /> {order.customer.phone}</p>
-                              <p className="text-gray-500 font-medium flex items-center gap-2"><MapPin className="w-4 h-4" /> {order.customer.address}</p>
+                              <p className="text-gray-500 font-medium flex items-center gap-2"><MapPin className="w-4 h-4" /> {order.customer.fullAddress || order.customer.address}</p>
                             </div>
                             
                             {/* Admin Order Item Summary */}
@@ -3446,7 +3545,7 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-8">
-                  {(hasLoadedProducts && liveProducts.length > 0 ? liveProducts.filter(p => p.isFlashSale) : (hasLoadedProducts && liveProducts.length === 0 ? [] : FLASH_SALE_PRODUCTS)).slice(0, 5).map((product) => (
+                  {(hasLoadedProducts && liveProducts.length > 0 ? liveProducts.filter(p => p.isFlashSale) : FLASH_SALE_PRODUCTS).slice(0, 5).map((product) => (
                     <div key={product.id} className="bg-white rounded-[2.5rem] p-5 shadow-xl relative group hover:-translate-y-2 transition-all duration-500 border-2 border-transparent hover:border-red-200">
                       {product.originalPrice && product.price < product.originalPrice && (
                         <div className="absolute top-4 right-4 z-10 bg-red-600 text-white font-black text-xs px-3 py-1 rounded-xl shadow-lg">
@@ -3531,7 +3630,7 @@ export default function App() {
               /* Home Layout: Full-width framed categories matching Flash Sale */
               <div className="space-y-24">
                 {categories.filter(c => c.id !== 'all').map(category => {
-                  const categoryProducts = (hasLoadedProducts && liveProducts.length > 0 ? liveProducts : (hasLoadedProducts && liveProducts.length === 0 ? [] : PRODUCTS))
+                  const categoryProducts = (hasLoadedProducts && liveProducts.length > 0 ? liveProducts : PRODUCTS)
                     .filter(p => p.category === category.id)
                     .slice(0, 5);
 
@@ -4426,8 +4525,11 @@ export default function App() {
                   >
                     Mua luôn ✨
                   </button>
-                  <button className="p-4 rounded-2xl bg-primary-light/30 text-primary-dark hover:bg-primary-light transition-all hidden sm:block">
-                    <HeartIcon className="w-6 h-6" />
+                  <button 
+                    onClick={() => toggleFavorite(quickViewProduct.id)}
+                    className={`p-4 rounded-2xl transition-all hidden sm:block border-2 ${favorites.includes(quickViewProduct.id) ? 'bg-red-50 border-red-200 text-red-500' : 'bg-primary-light/30 border-transparent text-primary-dark hover:bg-primary-light'}`}
+                  >
+                    <HeartIcon className={`w-6 h-6 ${favorites.includes(quickViewProduct.id) ? 'fill-current' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -4557,14 +4659,64 @@ export default function App() {
                         />
                       </div>
                     </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Tỉnh / Thành phố {loadingLocations.p && "..."}</label>
+                        <div className="relative group">
+                          <select 
+                            required
+                            value={customerInfo.province}
+                            onChange={e => setCustomerInfo({...customerInfo, province: e.target.value, district: "", ward: ""})}
+                            className="w-full px-4 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none text-sm pr-10"
+                          >
+                            <option value="">Chọn Tỉnh/TP</option>
+                            {provinces.map(p => <option key={p.code} value={p.name}>{p.name}</option>)}
+                          </select>
+                          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 rotate-90 pointer-events-none group-focus-within:text-primary-dark transition-colors" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Quận / Huyện {loadingLocations.d && "..."}</label>
+                        <div className="relative group">
+                          <select 
+                            required
+                            disabled={!customerInfo.province || loadingLocations.d}
+                            value={customerInfo.district}
+                            onChange={e => setCustomerInfo({...customerInfo, district: e.target.value, ward: ""})}
+                            className="w-full px-4 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none text-sm pr-10 disabled:opacity-50"
+                          >
+                            <option value="">Chọn Quận/Huyện</option>
+                            {districts.map(d => <option key={d.code} value={d.name}>{d.name}</option>)}
+                          </select>
+                          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 rotate-90 pointer-events-none group-focus-within:text-primary-dark transition-colors" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Phường / Xã {loadingLocations.w && "..."}</label>
+                        <div className="relative group">
+                          <select 
+                            required
+                            disabled={!customerInfo.district || loadingLocations.w}
+                            value={customerInfo.ward}
+                            onChange={e => setCustomerInfo({...customerInfo, ward: e.target.value})}
+                            className="w-full px-4 py-3.5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold appearance-none text-sm pr-10 disabled:opacity-50"
+                          >
+                            <option value="">Chọn Phường/Xã</option>
+                            {wards.map(w => <option key={w.code} value={w.name}>{w.name}</option>)}
+                          </select>
+                          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 rotate-90 pointer-events-none group-focus-within:text-primary-dark transition-colors" />
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
-                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Địa chỉ giao hàng</label>
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-4">Địa chỉ chi tiết (Số nhà, tên đường...)</label>
                       <input 
                         required
                         value={customerInfo.address}
                         onChange={e => setCustomerInfo({...customerInfo, address: e.target.value})}
                         className="w-full px-8 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none transition-all font-bold"
-                        placeholder="Số nhà, tên đường, phường/xã..."
+                        placeholder="Số nhà, tên đường, thôn/xóm..."
                       />
                     </div>
 
@@ -4935,7 +5087,7 @@ export default function App() {
                     <div className="space-y-2">
                       <p className="font-black text-gray-900">{orderDetail.customer.name}</p>
                       <p className="text-sm text-gray-500 font-bold flex items-center gap-2"><Phone className="w-4 h-4" /> {orderDetail.customer.phone}</p>
-                      <p className="text-sm text-gray-500 font-medium flex items-center gap-2"><MapPin className="w-4 h-4" /> {orderDetail.customer.address}</p>
+                      <p className="text-sm text-gray-500 font-medium flex items-center gap-2"><MapPin className="w-4 h-4" /> {orderDetail.customer.fullAddress || orderDetail.customer.address}</p>
                     </div>
                   </div>
                   <div className="space-y-4">
