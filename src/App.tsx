@@ -230,6 +230,8 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedSubCategory, setSelectedSubCategory] = useState("all");
   const [liveProducts, setLiveProducts] = useState<Product[]>([]);
+  const [allReviews, setAllReviews] = useState<any[]>([]);
+  const [hasLoadedReviews, setHasLoadedReviews] = useState(false);
   const [hasLoadedProducts, setHasLoadedProducts] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
@@ -533,10 +535,20 @@ export default function App() {
       setIsSettingsLoaded(true); // Allow UI to show even if settings fail
     });
 
+    // Real-time reviews
+    const unsubReviews = onSnapshot(collection(db, "reviews"), (snapshot) => {
+      const reviewsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllReviews(reviewsData);
+      setHasLoadedReviews(true);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, "reviews");
+    });
+
     return () => {
       unsubProducts();
       unsubCategories();
       unsubSettings();
+      unsubReviews();
     };
   }, []);
 
@@ -644,7 +656,7 @@ export default function App() {
     
     try {
       const reviewData = {
-        id: Date.now().toString(),
+        productId: productPage.id.toString(),
         userId: user.uid,
         userName: user.name || "Người dùng",
         rating: reviewRating,
@@ -653,16 +665,8 @@ export default function App() {
         createdAt: new Date().toISOString()
       };
 
-      const updatedReviews = [...(productPage.reviewsList || []), reviewData];
-      
-      const productRef = doc(db, "products", productPage.id.toString());
-      await setDoc(productRef, {
-        ...productPage,
-        reviewsList: updatedReviews
-      }, { merge: true });
+      await setDoc(doc(collection(db, "reviews")), reviewData);
 
-      setProductPage({...productPage, reviewsList: updatedReviews});
-      
       setReviewRating(5);
       setReviewComment("");
       setReviewImages([]);
@@ -3326,9 +3330,17 @@ export default function App() {
 
                         {/* Recent Reviews List */}
                         <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-                          {(productPage.reviewsList || []).length > 0 ? (
-                            productPage.reviewsList.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(review => (
-                              <div key={review.id} className="p-6 bg-white rounded-3xl border border-gray-50 shadow-sm space-y-4">
+                          {(() => {
+                            const currentReviews = [
+                              ...(productPage.reviewsList || []),
+                              ...allReviews.filter(r => r.productId === productPage.id.toString())
+                            ].filter((rev, idx, self) => 
+                              idx === self.findIndex((t) => t.id === rev.id || (t.createdAt === rev.createdAt && t.userId === rev.userId))
+                            );
+
+                            return currentReviews.length > 0 ? (
+                              currentReviews.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((review, idx) => (
+                                <div key={review.id || idx} className="p-6 bg-white rounded-3xl border border-gray-50 shadow-sm space-y-4">
                                 <div className="flex justify-between items-start">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 bg-primary-light/50 rounded-full flex items-center justify-center text-primary-dark font-black shadow-sm border-2 border-white text-sm">
@@ -3362,7 +3374,8 @@ export default function App() {
                               <Sparkles className="w-10 h-10 animate-pulse mx-auto text-primary-light" />
                               <p className="text-gray-400 font-black italic uppercase tracking-widest text-[10px]">Chưa có đánh giá nào... ✨</p>
                             </div>
-                          )}
+                          )
+                          })()}
                         </div>
                     </div>
                   </div>

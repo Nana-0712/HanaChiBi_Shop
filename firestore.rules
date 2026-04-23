@@ -67,7 +67,8 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow update: if isAdmin() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reviewsList']));
+      allow create, delete: if isAdmin();
     }
 
     match /categories/{categoryId} {
@@ -94,6 +95,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update: if isAdmin() || (isOwner(resource.data.userId) && request.resource.data.status == 'Đã hủy' && resource.data.status == 'Chờ xác nhận');
       allow delete: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
   }
 }
