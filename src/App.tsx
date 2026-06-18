@@ -20,6 +20,7 @@ import {
   collection, 
   doc, 
   setDoc, 
+  getDoc,
   onSnapshot, 
   query, 
   where, 
@@ -231,7 +232,7 @@ export default function App() {
   const [selectedSubCategory, setSelectedSubCategory] = useState("all");
   const [liveProducts, setLiveProducts] = useState<Product[]>([]);
   const [allReviews, setAllReviews] = useState<any[]>([]);
-  const [hasLoadedReviews, setHasLoadedReviews] = useState(false);
+  const [, setHasLoadedReviews] = useState(false);
   const [hasLoadedProducts, setHasLoadedProducts] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [selectedCartItems, setSelectedCartItems] = useState<string[]>([]);
@@ -259,6 +260,40 @@ export default function App() {
   const [priceRange, setPriceRange] = useState<[number, number] | null>(null);
   const [isAdminView, setIsAdminView] = useState(() => localStorage.getItem('hanachibi_admin_view') === 'true');
   const [isUploading, setIsUploading] = useState(false);
+  const [reviewingContext, setReviewingContext] = useState<{ orderId: string, productId: string } | null>(null);
+  const [showProductReviewSelector, setShowProductReviewSelector] = useState<any | null>(null);
+  const [returnRequests, setReturnRequests] = useState<any[]>([]);
+  const [showReturnModal, setShowReturnModal] = useState<any | null>(null);
+  const [showReturnDetailModal, setShowReturnDetailModal] = useState<any | null>(null);
+  const [adminReturnTab, setAdminReturnTab] = useState<'orders' | 'returns'>('orders');
+
+  // Return Form States
+  const [returnSelectedItems, setReturnSelectedItems] = useState<string[]>([]);
+  const [returnReason, setReturnReason] = useState<string>("Giao sai sản phẩm");
+  const [returnNotes, setReturnNotes] = useState<string>("");
+  const [returnRefundMethod, setReturnRefundMethod] = useState<string>("Ví Chibi");
+  const [returnProofImage, setReturnProofImage] = useState<string>("");
+  const [isUploadingReturnProof, setIsUploadingReturnProof] = useState<boolean>(false);
+  const [returnRejectingId, setReturnRejectingId] = useState<string | null>(null);
+  const [returnRejectNote, setReturnRejectNote] = useState<string>("");
+
+  useEffect(() => {
+    if (showReturnModal?.order) {
+      const orderItems = showReturnModal.order.items || [];
+      const itemIds = orderItems.map((item: any, idx: number) => item.product?.id?.toString() || idx.toString());
+      setReturnSelectedItems(itemIds);
+      setReturnReason("Giao sai sản phẩm");
+      setReturnNotes("");
+      setReturnRefundMethod("Ví Chibi");
+      setReturnProofImage("");
+    }
+  }, [showReturnModal]);
+
+  useEffect(() => {
+    if (!productPage) {
+      setReviewingContext(null);
+    }
+  }, [productPage]);
 
   const toggleAdminView = (val: boolean) => {
     setIsAdminView(val);
@@ -567,6 +602,24 @@ export default function App() {
       return () => unsubscribe();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      const q = user.role === 'admin' 
+        ? query(collection(db, "return_requests"), orderBy("createdAt", "desc"))
+        : query(collection(db, "return_requests"), where("userId", "==", user.uid), orderBy("createdAt", "desc"));
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const returnRequestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setReturnRequests(returnRequestsData);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, "return_requests");
+      });
+      return () => unsubscribe();
+    } else {
+      setReturnRequests([]);
+    }
+  }, [user]);
   const [vouchers] = useState([
     { code: "HANA10", discount: 10000, minOrder: 50000 },
     { code: "CHIBI20", discount: 20000, minOrder: 100000 },
@@ -662,7 +715,8 @@ export default function App() {
         rating: reviewRating,
         comment: reviewComment,
         images: reviewImages,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        orderId: reviewingContext?.orderId || ""
       };
 
       await setDoc(doc(collection(db, "reviews")), reviewData);
@@ -670,12 +724,196 @@ export default function App() {
       setReviewRating(5);
       setReviewComment("");
       setReviewImages([]);
+      setReviewingContext(null);
       showAlert("Cảm ơn bạn đã gửi đánh giá nhé! 🌸", "success");
     } catch (error) {
       console.error("Error submitting review:", error);
       showAlert("Có lỗi xảy ra khi gửi đánh giá. Thử lại sau nhé!", "error");
     }
   };
+
+  const handleConfirmReceived = async (orderId: string | number) => {
+    try {
+      await updateDoc(doc(db, "orders", String(orderId)), { status: 'Đã giao' });
+      showAlert("Xác nhận đã nhận hàng thành công! Đơn hàng đã chuyển sang phần Đã giao. Cảm ơn bạn rất nhiều 🌸", "success");
+    } catch (error) {
+      console.error("Error confirming order receipt:", error);
+      showAlert("Có lỗi xảy ra khi xác nhận nhận hàng. Thử lại sau nhé!", "error");
+    }
+  };
+
+  const handleToggleReturnItem = (itemId: string) => {
+    setReturnSelectedItems(prev => 
+      prev.includes(itemId) 
+        ? prev.filter(id => id !== itemId) 
+        : [...prev, itemId]
+    );
+  };
+
+  const handleSubmitReturnRequest = async () => {
+    if (!user) {
+      showAlert("Opps! Bạn cần đăng nhập để gửi yêu cầu nhé 🐾", "info");
+      setShowLogin(true);
+      return;
+    }
+    if (!showReturnModal || !showReturnModal.order) {
+      showAlert("Không tìm thấy thông tin đơn hàng cần trả! 🌸", "error");
+      return;
+    }
+    if (returnSelectedItems.length === 0) {
+      showAlert("Vui lòng chọn ít nhất một sản phẩm để trả hàng! 🌸", "error");
+      return;
+    }
+
+    try {
+      const order = showReturnModal.order;
+      const filteredItems = (order.items || []).filter((item: any, idx: number) => {
+        const itemId = item.product?.id ? String(item.product.id) : idx.toString();
+        return returnSelectedItems.includes(itemId);
+      });
+
+      // Calculate proportional refund amount matching total paid exactly
+      const originalTotalItemValue = (order.items || []).reduce((acc: number, item: any) => acc + (item.product?.price || 0) * (item.quantity || 1), 0);
+      const refundTotalItemValue = filteredItems.reduce((acc: number, item: any) => acc + (item.product?.price || 0) * (item.quantity || 1), 0);
+      const proportion = originalTotalItemValue > 0 ? (refundTotalItemValue / originalTotalItemValue) : 1;
+      const refundAmount = Math.round((order.total || 0) * proportion);
+
+      const returnRequestData = {
+        orderId: order.id ? String(order.id) : "",
+        userId: user.uid,
+        customerName: order.customer?.name || user.name || "Khách hàng",
+        items: filteredItems,
+        reason: returnReason || "Lý do khác",
+        notes: returnNotes || "",
+        proofImage: returnProofImage || "",
+        refundMethod: returnRefundMethod || "Ví Chibi",
+        status: "Chờ xử lý", // Trạng thái: Chờ xử lý, Đã duyệt, Đang gửi trả hàng, Đã nhận hàng hoàn, Đã hoàn tiền, Từ chối
+        adminNote: "",
+        refundAmount, // exact proportional total paid
+        createdAt: new Date().toISOString()
+      };
+
+      const returnRequestRef = doc(collection(db, "return_requests"));
+      await setDoc(returnRequestRef, returnRequestData);
+
+      // Force the order to transition to Trả hàng immediately
+      if (order.id) {
+        await updateDoc(doc(db, "orders", String(order.id)), { status: "Trả hàng" });
+      }
+      
+      setShowReturnModal(null);
+      showAlert("Gửi yêu cầu trả hàng/hoàn tiền thành công! Vui lòng chờ phản hồi từ HanaChibi nhé 🌸", "success");
+    } catch (error) {
+      console.error("Error submitting return request:", error);
+      showAlert("Đã xảy ra lỗi khi gửi yêu cầu. Thử lại sau nhé!", "error");
+    }
+  };
+
+  const handleApproveReturnRequest = async (requestId: string) => {
+    try {
+      await updateDoc(doc(db, "return_requests", requestId), { status: "Đã duyệt" });
+      showAlert("Đã duyệt yêu cầu hoàn trả thành công! 🌸", "success");
+    } catch (error) {
+      console.error("Error approving return request:", error);
+      showAlert("Đã xảy ra lỗi khi duyệt yêu cầu.", "error");
+    }
+  };
+
+  const handleUpdateReturnStatus = async (requestId: string, newStatus: string) => {
+    try {
+      await updateDoc(doc(db, "return_requests", requestId), { status: newStatus });
+      showAlert(`Đã chuyển đổi trạng thái yêu cầu sang: ${newStatus}! ✨`, "success");
+    } catch (error) {
+      console.error("Error updating return status:", error);
+      showAlert("Đã xảy ra lỗi khi cập nhật trạng thái.", "error");
+    }
+  };
+
+  const handleRejectReturnRequest = async (requestId: string) => {
+    if (!returnRejectNote.trim()) {
+      showAlert("Vui lòng nhập lý do từ chối bồi hoàn! 🐾", "info");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "return_requests", requestId), {
+        status: "Từ chối",
+        adminNote: returnRejectNote
+      });
+      setReturnRejectingId(null);
+      setReturnRejectNote("");
+      showAlert("Đã từ chối yêu cầu bổi hoàn và ghi nhận lý do! 🌸", "success");
+    } catch (error) {
+      console.error("Error rejecting return request:", error);
+      showAlert("Đã xảy ra lỗi khi từ chối yêu cầu.", "error");
+    }
+  };
+
+  const handleRefundReturnRequest = async (request: any) => {
+    try {
+      const refundAmount = typeof request.refundAmount === 'number'
+        ? request.refundAmount
+        : (request.items || []).reduce((acc: number, item: any) => {
+            return acc + ((item.product?.price || 0) * (item.quantity || 1));
+          }, 0);
+
+      if (request.refundMethod === "Ví Chibi") {
+        const userRef = doc(db, "users", request.userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const currentBalance = userData?.balance || 0;
+          await updateDoc(userRef, { balance: currentBalance + refundAmount });
+        } else {
+          await setDoc(userRef, {
+            uid: request.userId,
+            email: "",
+            name: request.customerName || "Khách hàng",
+            coins: 0,
+            balance: refundAmount,
+            role: "user"
+          });
+        }
+      }
+
+      if (request.orderId) {
+        await updateDoc(doc(db, "orders", String(request.orderId)), { status: "Trả hàng" });
+      }
+
+      await updateDoc(doc(db, "return_requests", request.id), { status: "Đã hoàn tiền" });
+      showAlert(`Đã hoàn tất bồi hoàn thành công số tiền ${refundAmount.toLocaleString('vi-VN')}đ! 🌸`, "success");
+    } catch (error) {
+      console.error("Error completing refund:", error);
+      showAlert("Đã xảy ra lỗi khi bồi hoàn.", "error");
+    }
+  };
+
+  const handleReviewProductsOfOrder = (order: any) => {
+    if (!order.items || order.items.length === 0) return;
+    
+    // If multiple products, open the selector modal
+    if (order.items.length > 1) {
+      setShowProductReviewSelector(order);
+    } else {
+      // If only one product, open it directly!
+      const item = order.items[0];
+      if (item.product) {
+        setProductPage(item.product);
+        setProductPageQuantity(item.product.minQuantity || 1);
+        setProductPageOptions({});
+        setReviewingContext({ orderId: order.id, productId: item.product.id.toString() });
+        setShowMyOrders(false); // Close orders modal
+        
+        // Scroll to the reviews section after a short delay to let DOM render
+        setTimeout(() => {
+          const reviewsSection = document.getElementById("product-reviews");
+          if (reviewsSection) {
+            reviewsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 300);
+      }
+    }
+  };
+
   const [subCategoriesInput, setSubCategoriesInput] = useState("");
   const [rawProductOptions, setRawProductOptions] = useState<string[]>([]);
   const [orderDetail, setOrderDetail] = useState<any>(null);
@@ -1238,7 +1476,31 @@ export default function App() {
           
           {adminTab === 'orders' ? (
             <div className="space-y-8">
-              <div className="flex flex-col md:flex-row gap-6">
+              <div className="flex gap-4 border-b border-gray-200 pb-2">
+                <button
+                  type="button"
+                  onClick={() => setAdminReturnTab('orders')}
+                  className={`pb-2 px-4 text-sm font-black transition-all relative ${adminReturnTab === 'orders' ? 'text-primary-dark border-b-2 border-primary-dark' : 'text-gray-400 font-bold hover:text-gray-600'}`}
+                >
+                  Đơn hàng ({orders.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminReturnTab('returns')}
+                  className={`pb-2 px-4 text-sm font-black transition-all relative ${adminReturnTab === 'returns' ? 'text-primary-dark border-b-2 border-primary-dark' : 'text-gray-400 font-bold hover:text-gray-600'}`}
+                >
+                  Yêu cầu Trả hàng / Hoàn tiền ({returnRequests.length})
+                  {returnRequests.filter(r => r.status === 'Chờ xử lý').length > 0 && (
+                    <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-[10px] rounded-full font-black animate-pulse">
+                      {returnRequests.filter(r => r.status === 'Chờ xử lý').length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {adminReturnTab === 'orders' ? (
+                <>
+                  <div className="flex flex-col md:flex-row gap-6">
                 <div className="flex-grow relative">
                   <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input 
@@ -1264,7 +1526,8 @@ export default function App() {
 
               <div className="grid gap-6">
                 {orders.filter(o => {
-                  const matchesStatus = selectedOrderStatus === "Tất cả" || o.status === selectedOrderStatus;
+                  const matchesStatus = selectedOrderStatus === "Tất cả" || 
+                    (selectedOrderStatus === "Chờ giao hàng" ? (o.status === "Chờ giao hàng" || o.status === "Đã giao đơn hàng") : o.status === selectedOrderStatus);
                   const matchesSearch = o.id.toString().includes(adminOrderSearch) || o.customer.name.toLowerCase().includes(adminOrderSearch.toLowerCase());
                   return matchesStatus && matchesSearch;
                 }).length === 0 ? (
@@ -1274,7 +1537,8 @@ export default function App() {
                 ) : (
                   orders
                     .filter(o => {
-                      const matchesStatus = selectedOrderStatus === "Tất cả" || o.status === selectedOrderStatus;
+                      const matchesStatus = selectedOrderStatus === "Tất cả" || 
+                        (selectedOrderStatus === "Chờ giao hàng" ? (o.status === "Chờ giao hàng" || o.status === "Đã giao đơn hàng") : o.status === selectedOrderStatus);
                       const matchesSearch = o.id.toString().includes(adminOrderSearch) || o.customer.name.toLowerCase().includes(adminOrderSearch.toLowerCase());
                       return matchesStatus && matchesSearch;
                     })
@@ -1291,6 +1555,7 @@ export default function App() {
                                   onClick={() => setActiveStatusMenu(activeStatusMenu === order.id ? null : order.id)}
                                   className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
                                     order.status === 'Đã giao' ? 'bg-green-100 text-green-600' :
+                                    order.status === 'Đã giao đơn hàng' ? 'bg-orange-100 text-orange-600' :
                                     order.status === 'Đã hủy' ? 'bg-red-100 text-red-600' :
                                     order.status === 'Chờ xác nhận' ? 'bg-yellow-100 text-yellow-600' :
                                     'bg-blue-100 text-blue-600'
@@ -1306,7 +1571,7 @@ export default function App() {
                                       exit={{ opacity: 0, y: 10 }}
                                       className="absolute top-full left-0 mt-2 bg-white shadow-2xl rounded-2xl p-2 z-50 border-2 border-gray-50 min-w-[180px] grid grid-cols-1 gap-1"
                                     >
-                                      {["Chờ xác nhận", "Chờ lấy hàng", "Chờ giao hàng", "Đã giao", "Trả hàng", "Đã hủy"].map(s => (
+                                      {["Chờ xác nhận", "Chờ lấy hàng", "Chờ giao hàng", "Đã giao đơn hàng", "Đã giao", "Trả hàng", "Đã hủy"].map(s => (
                                         <button 
                                           key={s}
                                           onClick={(e) => {
@@ -1370,6 +1635,22 @@ export default function App() {
                                   <Check className="w-4 h-4" /> Xác nhận đơn
                                 </button>
                               )}
+                              {order.status === 'Chờ lấy hàng' && (
+                                <button 
+                                  onClick={() => handleUpdateOrderStatus(order.id, { status: 'Chờ giao hàng' })}
+                                  className="px-6 py-3 rounded-xl bg-blue-500 text-white text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20 flex items-center gap-2"
+                                >
+                                  <Truck className="w-4 h-4" /> Giao hàng
+                                </button>
+                              )}
+                              {order.status === 'Chờ giao hàng' && (
+                                <button 
+                                  onClick={() => handleUpdateOrderStatus(order.id, { status: 'Đã giao đơn hàng' })}
+                                  className="px-6 py-3 rounded-xl bg-emerald-500 text-white text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+                                >
+                                  <Check className="w-4 h-4" /> Đã giao đơn hàng
+                                </button>
+                              )}
                               <button 
                                 onClick={() => setActiveAdminMenu(activeAdminMenu === order.id ? null : order.id)}
                                 className={`p-3 rounded-xl transition-all ${activeAdminMenu === order.id ? 'bg-primary-light text-primary-dark' : 'bg-gray-50 text-gray-400 hover:bg-primary-light/20 hover:text-primary-dark'}`}
@@ -1404,7 +1685,7 @@ export default function App() {
                                     >
                                       <Printer className="w-4 h-4" /> In hóa đơn
                                     </button>
-                                    {order.status !== 'Đã hủy' && (
+                                    {!['Đã hủy', 'Đã giao đơn hàng', 'Đã giao', 'Trả hàng'].includes(order.status) && (
                                       <button 
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -1441,8 +1722,158 @@ export default function App() {
                     ))
                 )}
               </div>
+            </>
+          ) : (
+            <div className="space-y-6">
+              {/* Returns List */}
+              {returnRequests.length === 0 ? (
+                <div className="bg-white p-24 rounded-[3.5rem] text-center shadow-sm border border-gray-100">
+                  <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6 text-2xl animate-bounce">🌱</div>
+                  <h4 className="text-xl font-black text-gray-800 mb-1">Chưa có yêu cầu bồi hoàn nào</h4>
+                  <p className="text-xs text-gray-400 font-bold max-w-sm mx-auto font-sans leading-relaxed">Khi sản phẩm gặp sự cố hoặc lỗi giao thiếu, khách hàng sẽ trực tiếp tạo phiếu bồi hoàn; phiếu sẽ lập tức hiển thị tại đây để bạn giải quyết bồi hoàn nhé!</p>
+                </div>
+              ) : (
+                returnRequests
+                  .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  .map((request: any) => {
+                    const totalRefund = typeof request.refundAmount === 'number'
+                      ? request.refundAmount
+                      : (request.items || []).reduce((acc: number, item: any) => {
+                          return acc + ((item.product?.price || 0) * (item.quantity || 1));
+                        }, 0);
+                    return (
+                      <div key={request.id} className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-orange-100/60 transition-all text-left">
+                        <div className="flex flex-col md:flex-row justify-between gap-6 pb-6 border-b border-gray-100">
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-3">
+                              <span className="bg-orange-50 text-orange-600 border border-orange-100 px-3 py-1 rounded-lg text-[10px] font-black tracking-widest uppercase">Mã đơn: #{request.orderId}</span>
+                              <span className="text-gray-400 text-xs font-bold">Ngày gửi: {new Date(request.createdAt).toLocaleString('vi-VN')}</span>
+                              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                                request.status === 'Đã hoàn tiền' ? 'bg-emerald-100 text-emerald-600' :
+                                request.status === 'Từ chối' ? 'bg-red-100 text-red-600' :
+                                request.status === 'Chờ xử lý' ? 'bg-amber-100 text-amber-600 animate-pulse' :
+                                'bg-blue-100 text-blue-600'
+                              }`}>
+                                {request.status}
+                              </span>
+                            </div>
+                            <div className="space-y-1">
+                              <h4 className="text-xl font-black text-gray-900">{request.customerName}</h4>
+                              <p className="text-xs text-gray-400 font-bold">Phương thức nhận: <span className="font-black text-primary-dark">{request.refundMethod}</span></p>
+                              <p className="text-xs text-gray-500 bg-orange-50/50 p-3.5 rounded-2xl border border-orange-100/30 inline-block font-semibold">🐾 Lý do: <span className="font-extrabold text-orange-700">{request.reason}</span> {request.notes && `• "${request.notes}"`}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col md:items-end justify-between gap-4">
+                            <div className="space-y-1 md:text-right">
+                              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">Số tiền bồi hoàn</p>
+                              <p className="text-3xl font-black text-orange-600">{totalRefund.toLocaleString('vi-VN')}đ</p>
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-2">
+                              {request.status === 'Chờ xử lý' && (
+                                <>
+                                  <button
+                                    onClick={() => handleApproveReturnRequest(request.id)}
+                                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black rounded-xl shadow-md uppercase tracking-wider transition-all cursor-pointer"
+                                  >
+                                    Duyệt yêu cầu
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setReturnRejectingId(request.id);
+                                      setReturnRejectNote("");
+                                    }}
+                                    className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-600 text-xs font-black rounded-xl transition-all uppercase tracking-wider cursor-pointer"
+                                  >
+                                    Từ chối
+                                  </button>
+                                </>
+                              )}
+
+                              {request.status === 'Đã duyệt' && (
+                                <button
+                                  onClick={() => handleUpdateReturnStatus(request.id, 'Đang gửi trả hàng')}
+                                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-xs font-black rounded-xl shadow-md uppercase tracking-wider transition-all cursor-pointer"
+                                >
+                                  Yêu cầu Đang gửi trả hàng 🚚
+                                </button>
+                              )}
+
+                              {request.status === 'Đang gửi trả hàng' && (
+                                <button
+                                  onClick={() => handleUpdateReturnStatus(request.id, 'Đã nhận hàng hoàn')}
+                                  className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white text-xs font-black rounded-xl shadow-md uppercase tracking-wider transition-all cursor-pointer"
+                                >
+                                  Xác nhận đã nhận hàng hoàn 📦
+                                </button>
+                              )}
+
+                              {request.status === 'Đã nhận hàng hoàn' && (
+                                <button
+                                  onClick={() => handleRefundReturnRequest(request)}
+                                  className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-black rounded-xl shadow-lg uppercase tracking-wider transition-all animate-pulse cursor-pointer"
+                                >
+                                  Hoàn tiền & Hoàn tất 💰
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {returnRejectingId === request.id && (
+                          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-2xl space-y-3">
+                            <p className="text-xs font-black text-red-500 uppercase tracking-widest">Nhập lý do từ chối bồi hoàn 🐾</p>
+                            <textarea
+                              value={returnRejectNote}
+                              onChange={(e) => setReturnRejectNote(e.target.value)}
+                              placeholder="Ví dụ: Sản phẩm khách làm hỏng, ảnh minh chứng không phù hợp..."
+                              className="w-full p-3 text-xs font-bold border border-red-200 rounded-xl outline-none focus:border-red-400 bg-white"
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button onClick={() => setReturnRejectingId(null)} className="px-3 py-1.5 text-[10px] font-black text-gray-500 hover:bg-gray-100 rounded-lg">Hủy</button>
+                              <button onClick={() => handleRejectReturnRequest(request.id)} className="px-4 py-1.5 text-[10px] font-black bg-red-500 text-white rounded-lg">Xác nhận từ chối</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Details notes & proof images */}
+                        <div className="mt-6 flex flex-col md:flex-row gap-6 items-start">
+                          {request.proofImage && (
+                            <div className="w-full md:w-32 h-32 rounded-2xl overflow-hidden border border-gray-100 shrink-0 shadow-sm">
+                              <a href={request.proofImage} target="_blank" rel="noreferrer" className="block w-full h-full">
+                                <img src={request.proofImage} className="w-full h-full object-cover hover:scale-105 transition-transform" />
+                              </a>
+                            </div>
+                          )}
+                          <div className="space-y-3 flex-grow w-full">
+                            <h5 className="text-xs font-black text-gray-400 uppercase tracking-widest">Sản phẩm yêu cầu bồi hoàn:</h5>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                              {(request.items || []).map((item: any, idx: number) => (
+                                <div key={idx} className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100/65">
+                                  <img src={item.product?.image || "https://picsum.photos/seed/placeholder/100/100"} className="w-10 h-10 object-cover rounded-lg" />
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black text-gray-800 line-clamp-1">{item.product?.name}</p>
+                                    <p className="text-[10px] text-gray-400 font-bold">Số lượng: {item.quantity} • {(item.product?.price || 0).toLocaleString('vi-VN')}đ</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {request.adminNote && (
+                              <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-xs font-bold text-red-600">
+                                ❌ Lý do từ chối: {request.adminNote}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
             </div>
-          ) : adminTab === 'stats' ? (
+          )}
+        </div>
+      ) : adminTab === 'stats' ? (
             <div className="space-y-12">
               {/* Stats Metrics Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
@@ -2656,7 +3087,9 @@ export default function App() {
               if (now - lastClick < 500) {
                 (window as any)._logoClickCount = count + 1;
                 if (count + 1 >= 5) {
-                  setShowAdminPasswordModal(true);
+                  if (user?.role === 'admin') {
+                    setShowAdminPasswordModal(true);
+                  }
                   (window as any)._logoClickCount = 0;
                 }
               } else {
@@ -2773,6 +3206,12 @@ export default function App() {
                           <div className="px-4 py-2 border-b border-gray-50 mb-1">
                             <p className="text-[10px] font-black text-gray-400 uppercase">Đang đăng nhập</p>
                             <p className="text-sm font-black text-primary-dark truncate">{user.name}</p>
+                            <div className="flex flex-col gap-1 mt-1.5 border-t border-gray-50 pt-1.5 align-left text-left">
+                              {user.coins !== undefined && (
+                                <span className="text-[10px] text-yellow-600 font-extrabold flex items-center gap-1">🪙 {user.coins.toLocaleString('vi-VN')} xu</span>
+                              )}
+                                <span className="text-[10px] text-emerald-600 font-extrabold flex items-center gap-1">🌱 Ví Chibi: {(user.balance || 0).toLocaleString('vi-VN')}đ</span>
+                            </div>
                           </div>
                           <div className="p-2 border-b border-gray-50 mb-1">
                             <label className="flex items-center gap-3 px-4 py-3 text-sm font-bold text-gray-700 hover:bg-primary-light/20 rounded-xl transition-colors cursor-pointer">
@@ -3258,75 +3697,77 @@ export default function App() {
                         <h3 className="text-lg font-black text-gray-900 border-l-4 border-primary-dark pl-3 uppercase tracking-wider">Đánh giá từ khách hàng</h3>
                         
                         {/* Write Review Section */}
-                        <div className="bg-white p-6 rounded-[2rem] border-2 border-primary-light/10 shadow-sm space-y-5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-primary-light/30 rounded-xl flex items-center justify-center text-primary-dark">
-                              <Star className="w-5 h-5 fill-current" />
-                            </div>
-                            <h4 className="text-base font-black text-gray-900">Gửi lời yêu thương 🎀</h4>
-                          </div>
-                          
-                          <div className="space-y-4">
-                            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-2xl w-fit">
-                              {[1,2,3,4,5].map(s => (
-                                <button key={s} onClick={() => setReviewRating(s)} className={`p-1.5 rounded-lg transition-all ${reviewRating >= s ? 'bg-yellow-400 text-white shadow-md' : 'bg-white text-gray-300'}`}>
-                                  <Star className={`w-4 h-4 ${reviewRating >= s ? 'fill-current' : ''}`} />
-                                </button>
-                              ))}
-                            </div>
-                            
-                            <div className="relative group">
-                              <textarea 
-                                value={reviewComment}
-                                onChange={e => setReviewComment(e.target.value)}
-                                placeholder="Nhập cảm nhận của bạn nhé... ✨"
-                                className="w-full px-6 py-4 rounded-3xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold h-24 resize-none transition-all shadow-sm text-sm"
-                              />
-                            </div>
-                            
-                            <div className="flex flex-col gap-4">
-                              <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                                {reviewImages.map((img, i) => (
-                                  <div key={i} className="relative w-16 h-16 rounded-xl border border-gray-100 overflow-hidden shrink-0 shadow-sm">
-                                    <img src={cleanImageUrl(img)} className="w-full h-full object-cover" />
-                                    <button onClick={() => setReviewImages(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 p-1 bg-red-500 text-white rounded-bl-lg">
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </div>
-                                ))}
-                                <div className="relative w-16 h-16 rounded-xl bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 hover:border-primary transition-all shrink-0">
-                                  {isUploading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                  <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    onChange={async (e) => {
-                                      const file = e.target.files?.[0];
-                                      if (file) {
-                                        setIsUploading(true);
-                                        try {
-                                          const url = await uploadImage(file, "reviews");
-                                          setReviewImages(prev => [...prev, url]);
-                                        } finally {
-                                          setIsUploading(false);
-                                        }
-                                      }
-                                    }}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                  />
-                                </div>
+                        {reviewingContext && reviewingContext.productId === productPage.id.toString() && (
+                          <div className="bg-white p-6 rounded-[2rem] border-2 border-primary-light/10 shadow-sm space-y-5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-primary-light/30 rounded-xl flex items-center justify-center text-primary-dark">
+                                <Star className="w-5 h-5 fill-current" />
                               </div>
-                              <button 
-                                onClick={handleSubmitReview}
-                                className="w-full py-4 btn-primary shadow-xl text-sm"
-                              >
-                                Gửi đánh giá ngay ✨
-                              </button>
+                              <h4 className="text-base font-black text-gray-900">Gửi lời yêu thương 🎀</h4>
                             </div>
-                            {!user && <p className="text-[10px] text-center text-red-400 font-black uppercase tracking-widest italic flex items-center justify-center gap-2">
-                              <Info className="w-3 h-3" /> Bạn cần đăng nhập nhé 🐾
-                            </p>}
+                            
+                            <div className="space-y-4">
+                              <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-2xl w-fit">
+                                {[1,2,3,4,5].map(s => (
+                                  <button key={s} onClick={() => setReviewRating(s)} className={`p-1.5 rounded-lg transition-all ${reviewRating >= s ? 'bg-yellow-400 text-white shadow-md' : 'bg-white text-gray-300'}`}>
+                                    <Star className={`w-4 h-4 ${reviewRating >= s ? 'fill-current' : ''}`} />
+                                  </button>
+                                ))}
+                              </div>
+                              
+                              <div className="relative group">
+                                <textarea 
+                                  value={reviewComment}
+                                  onChange={e => setReviewComment(e.target.value)}
+                                  placeholder="Nhập cảm nhận của bạn nhé... ✨"
+                                  className="w-full px-6 py-4 rounded-3xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold h-24 resize-none transition-all shadow-sm text-sm"
+                                />
+                              </div>
+                              
+                              <div className="flex flex-col gap-4">
+                                <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                  {reviewImages.map((img, i) => (
+                                    <div key={i} className="relative w-16 h-16 rounded-xl border border-gray-100 overflow-hidden shrink-0 shadow-sm">
+                                      <img src={cleanImageUrl(img)} className="w-full h-full object-cover" />
+                                      <button onClick={() => setReviewImages(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 p-1 bg-red-500 text-white rounded-bl-lg">
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  <div className="relative w-16 h-16 rounded-xl bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 hover:border-primary transition-all shrink-0">
+                                    {isUploading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                    <input 
+                                      type="file" 
+                                      accept="image/*" 
+                                      onChange={async (e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          setIsUploading(true);
+                                          try {
+                                            const url = await uploadImage(file, "reviews");
+                                            setReviewImages(prev => [...prev, url]);
+                                          } finally {
+                                            setIsUploading(false);
+                                          }
+                                        }
+                                      }}
+                                      className="absolute inset-0 opacity-0 cursor-pointer"
+                                    />
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={handleSubmitReview}
+                                  className="w-full py-4 btn-primary shadow-xl text-sm"
+                                >
+                                  Gửi đánh giá ngay ✨
+                                </button>
+                              </div>
+                              {!user && <p className="text-[10px] text-center text-red-400 font-black uppercase tracking-widest italic flex items-center justify-center gap-2">
+                                <Info className="w-3 h-3" /> Bạn cần đăng nhập nhé 🐾
+                              </p>}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Recent Reviews List */}
                         <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -4224,13 +4665,13 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="space-y-6">
-                      {orders.filter(o => o.userId === user.uid && (myOrdersTab === "Tất cả" || o.status === myOrdersTab)).length === 0 ? (
+                      {orders.filter(o => o.userId === user.uid && (myOrdersTab === "Tất cả" || (myOrdersTab === "Chờ giao hàng" ? (o.status === "Chờ giao hàng" || o.status === "Đã giao đơn hàng") : o.status === myOrdersTab))).length === 0 ? (
                         <div className="text-center py-20">
                           <p className="text-gray-400 font-bold">Không tìm thấy đơn hàng nào ở mục này~</p>
                         </div>
                       ) : (
                         orders
-                          .filter(o => o.userId === user.uid && (myOrdersTab === "Tất cả" || o.status === myOrdersTab))
+                          .filter(o => o.userId === user.uid && (myOrdersTab === "Tất cả" || (myOrdersTab === "Chờ giao hàng" ? (o.status === "Chờ giao hàng" || o.status === "Đã giao đơn hàng") : o.status === myOrdersTab)))
                           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                           .map(order => (
                           <div key={order.id} className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
@@ -4242,9 +4683,11 @@ export default function App() {
                               <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                                 order.status === 'Đã giao' ? 'bg-green-100 text-green-600' :
                                 order.status === 'Đã hủy' ? 'bg-red-100 text-red-600' :
+                                order.status === 'Chờ giao hàng' ? 'bg-blue-100 text-blue-600' :
+                                order.status === 'Đã giao đơn hàng' ? 'bg-orange-100 text-orange-600' :
                                 'bg-primary-light/20 text-primary-dark'
                               }`}>
-                                {order.status}
+                                {(order.status === 'Chờ giao hàng' || order.status === 'Đã giao đơn hàng') ? 'Đang giao hàng' : order.status}
                               </span>
                             </div>
 
@@ -4282,6 +4725,55 @@ export default function App() {
                                     Hủy đơn
                                   </button>
                                 )}
+                                {(() => {
+                                  const existingReturnRequest = returnRequests.find(r => r.orderId?.toString() === order.id?.toString());
+                                  if (existingReturnRequest) {
+                                    return (
+                                      <button
+                                        onClick={() => setShowReturnDetailModal(existingReturnRequest)}
+                                        className="px-4 py-2 text-xs font-black text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl transition-all flex items-center gap-1"
+                                      >
+                                        🔄 Hoàn hàng ({existingReturnRequest.status})
+                                      </button>
+                                    );
+                                  }
+                                  if (order.status === 'Đã giao đơn hàng' || order.status === 'Đã giao') {
+                                    return (
+                                      <button 
+                                        onClick={() => setShowReturnModal({ order })}
+                                        className="px-4 py-2 text-xs font-black bg-orange-500 hover:bg-orange-600 text-white rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <RotateCcw className="w-3.5 h-3.5" /> Trả hàng/Hoàn tiền
+                                      </button>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                                {order.status === 'Đã giao đơn hàng' && (
+                                  <button 
+                                    onClick={() => handleConfirmReceived(order.id)}
+                                    className="px-4 py-2 text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer animate-pulse"
+                                  >
+                                    <Check className="w-3.5 h-3.5" /> Đã nhận hàng
+                                  </button>
+                                )}
+                                {(() => {
+                                  const isAllProductsReviewed = (order.items || []).every((item: any) => {
+                                    if (!item.product) return true;
+                                    const itemId = item.product.id ? String(item.product.id) : '';
+                                    return allReviews.some(
+                                      r => r.orderId?.toString() === order.id?.toString() && r.productId?.toString() === itemId
+                                    );
+                                  });
+                                  return order.status === 'Đã giao' && !isAllProductsReviewed && (
+                                    <button 
+                                      onClick={() => handleReviewProductsOfOrder(order)}
+                                      className="px-4 py-2 text-xs font-black bg-[#ffb7c5] hover:bg-[#ff9eaf] text-white rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Star className="w-3.5 h-3.5 fill-current text-white" /> Đánh giá sản phẩm
+                                    </button>
+                                  );
+                                })()}
                                 <button 
                                   onClick={() => setOrderDetail(order)}
                                   className="px-4 py-2 text-xs font-black text-primary-dark hover:bg-primary-light/20 transition-all rounded-xl"
@@ -4303,6 +4795,114 @@ export default function App() {
       </AnimatePresence>
 
       {/* Shared Modals */}
+
+      {/* Product Review Selector Modal */}
+      <AnimatePresence>
+        {showProductReviewSelector && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setShowProductReviewSelector(null)} 
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative bg-white w-full max-w-2xl rounded-[3rem] p-10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h3 className="text-2xl font-black text-gray-900 mb-1">Đánh giá sản phẩm 🌸</h3>
+                  <p className="text-xs text-gray-400 font-bold">Chọn sản phẩm bạn muốn chia sẻ cảm nhận từ đơn #{showProductReviewSelector.id}</p>
+                </div>
+                <button 
+                  onClick={() => setShowProductReviewSelector(null)} 
+                  className="p-3 hover:bg-gray-100 rounded-full transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-4 max-h-[50vh] pr-2 custom-scrollbar">
+                {(showProductReviewSelector.items || []).map((item: any, idx: number) => {
+                  if (!item.product) return null;
+                  const wasReviewed = allReviews.some(
+                    r => r.orderId?.toString() === showProductReviewSelector.id?.toString() && r.productId?.toString() === item.product.id?.toString()
+                  );
+                  const existingReview = allReviews.find(
+                    r => r.orderId?.toString() === showProductReviewSelector.id?.toString() && r.productId?.toString() === item.product.id?.toString()
+                  );
+
+                  return (
+                    <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div className="flex items-center gap-4">
+                        <img 
+                          src={item.product?.image || "https://picsum.photos/seed/placeholder/100/100"} 
+                          className="w-16 h-16 rounded-xl object-cover border border-gray-100 flex-shrink-0" 
+                        />
+                        <div>
+                          <p className="text-sm font-black text-gray-800 line-clamp-2">{item.product?.name}</p>
+                          {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
+                            <p className="text-[10px] text-primary-dark font-bold italic">
+                              Phân loại: {Object.values(item.selectedOptions).join(', ')}
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-400 font-bold">Số lượng: {item.quantity}</p>
+                        </div>
+                      </div>
+
+                      {wasReviewed ? (
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                          <span className="px-3 py-1 bg-green-100 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest animate-fade-in">
+                            Đã đánh giá
+                          </span>
+                          {existingReview && (
+                            <div className="flex items-center gap-0.5 text-yellow-400">
+                              {[...Array(5)].map((_, i) => (
+                                <Star 
+                                  key={i} 
+                                  className={`w-3.5 h-3.5 ${i < existingReview.rating ? "fill-yellow-400" : "text-gray-200"}`} 
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => {
+                            setProductPage(item.product);
+                            setProductPageQuantity(item.product.minQuantity || 1);
+                            setProductPageOptions({});
+                            setReviewingContext({ 
+                              orderId: showProductReviewSelector.id.toString(), 
+                              productId: item.product.id.toString() 
+                            });
+                            setShowProductReviewSelector(null);
+                            setShowMyOrders(false);
+
+                            setTimeout(() => {
+                              const reviewsSection = document.getElementById("product-reviews");
+                              if (reviewsSection) {
+                                reviewsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+                              }
+                            }, 300);
+                          }}
+                          className="px-5 py-2.5 bg-primary-dark text-white hover:bg-black rounded-xl text-xs font-black uppercase tracking-widest shadow-md hover:shadow-lg transition-all flex-shrink-0 cursor-pointer"
+                        >
+                          Viết đánh giá
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Out of Stock Modal */}
       <AnimatePresence>
@@ -4356,6 +4956,306 @@ export default function App() {
                 >
                   Hủy tất cả {affectedOrders.length} đơn
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+       </AnimatePresence>
+ 
+       <AnimatePresence>
+         {showReturnModal && showReturnModal.order && (
+           <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowReturnModal(null)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+             <motion.div 
+               initial={{ scale: 0.9, opacity: 0 }} 
+               animate={{ scale: 1, opacity: 1 }} 
+               exit={{ scale: 0.9, opacity: 0 }}
+               className="relative bg-white w-full max-w-2xl rounded-[3rem] p-10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+             >
+               <div className="flex justify-between items-center mb-6">
+                 <div>
+                   <h3 className="text-2xl font-black text-gray-900 mb-1">Yêu cầu hoàn hàng 🌸</h3>
+                   <p className="text-xs text-gray-400 font-bold">Mã đơn hàng: #{showReturnModal.order.id}</p>
+                 </div>
+                 <button 
+                   onClick={() => setShowReturnModal(null)} 
+                   className="p-3 hover:bg-gray-100 rounded-full transition-all"
+                 >
+                   <X className="w-6 h-6" />
+                 </button>
+               </div>
+ 
+               <div className="overflow-y-auto space-y-6 pr-2 custom-scrollbar flex-grow text-left">
+                 {/* 1. Chọn sản phẩm muốn trả */}
+                 <div>
+                   <label className="block text-sm font-black text-gray-700 mb-3">1. Chọn sản phẩm muốn trả 📦</label>
+                   <div className="space-y-3">
+                     {(showReturnModal.order.items || []).map((item: any, idx: number) => {
+                       if (!item.product) return null;
+                       const itemId = item.product.id?.toString() || idx.toString();
+                       const isSelected = returnSelectedItems.includes(itemId);
+                       return (
+                         <div 
+                           key={idx} 
+                           onClick={() => handleToggleReturnItem(itemId)}
+                           className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between ${isSelected ? 'border-primary bg-primary-light/10 shadow-sm' : 'border-gray-100 bg-gray-50'}`}
+                         >
+                           <div className="flex items-center gap-4">
+                             <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${isSelected ? 'bg-primary border-primary text-white' : 'border-gray-300'}`}>
+                               {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                             </div>
+                             <img src={item.product.image || "https://picsum.photos/seed/placeholder/100/100"} className="w-12 h-12 rounded-xl object-cover border border-gray-200" />
+                             <div>
+                               <p className="text-sm font-bold text-gray-800 line-clamp-1">{item.product.name}</p>
+                               <p className="text-xs text-gray-400">{(item.product.price || 0).toLocaleString('vi-VN')}đ x {item.quantity}</p>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 </div>
+ 
+                 {/* 2. Chọn lý do hoàn hàng */}
+                 <div>
+                   <label className="block text-sm font-black text-gray-700 mb-3">2. Lý do hoàn hàng 🎀</label>
+                   <div className="grid grid-cols-2 gap-2">
+                     {[
+                       "Giao sai sản phẩm",
+                       "Sản phẩm bị lỗi/hỏng",
+                       "Thiếu hàng",
+                       "Không đúng mô tả",
+                       "Lý do khác"
+                     ].map((reasonOption) => {
+                       const isSelected = returnReason === reasonOption;
+                       return (
+                         <button
+                           key={reasonOption}
+                           type="button"
+                           onClick={() => setReturnReason(reasonOption)}
+                           className={`p-3 rounded-2xl border text-xs font-bold transition-all ${isSelected ? 'bg-[#ffb7c5] text-white border-[#ff9eaf] shadow-md' : 'bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-100'}`}
+                         >
+                           {reasonOption}
+                         </button>
+                       );
+                     })}
+                   </div>
+                 </div>
+ 
+                 {/* 3. Chi tiết thêm */}
+                 <div>
+                   <label className="block text-sm font-black text-gray-700 mb-3">3. Chi tiết thêm (không bắt buộc) ✨</label>
+                   <textarea
+                     value={returnNotes}
+                     onChange={(e) => setReturnNotes(e.target.value)}
+                     placeholder="Vui lòng cho biết thêm lý do cụ thể..."
+                     className="w-full px-5 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-primary-light focus:bg-white outline-none font-bold h-20 resize-none transition-all shadow-sm text-sm"
+                   />
+                 </div>
+ 
+                 {/* 4. Tải ảnh minh chứng */}
+                 <div>
+                   <label className="block text-sm font-black text-gray-700 mb-3">4. Ảnh minh chứng (nếu có) 📸</label>
+                   <div className="flex gap-4 items-center">
+                     {returnProofImage ? (
+                       <div className="relative w-20 h-20 rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                         <img src={returnProofImage} className="w-full h-full object-cover" />
+                         <button onClick={() => setReturnProofImage("")} className="absolute top-0 right-0 p-1 bg-red-500 text-white rounded-bl-lg">
+                           <X className="w-3 h-3" />
+                         </button>
+                       </div>
+                     ) : (
+                       <div className="relative w-23 h-20 rounded-2xl bg-gray-50 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 hover:border-primary transition-all shrink-0 cursor-pointer">
+                         {isUploadingReturnProof ? <Sparkles className="w-5 h-5 animate-spin text-primary" /> : <Camera className="w-5 h-5" />}
+                         <span className="text-[9px] font-black uppercase mt-1">Tải ảnh</span>
+                         <input 
+                           type="file" 
+                           accept="image/*" 
+                           onChange={async (e) => {
+                             const file = e.target.files?.[0];
+                             if (file) {
+                               setIsUploadingReturnProof(true);
+                               try {
+                                 const url = await uploadImage(file, "returns");
+                                 setReturnProofImage(url);
+                               } catch (err) {
+                                 console.error("Error upload image:", err);
+                               } finally {
+                                 setIsUploadingReturnProof(false);
+                               }
+                             }
+                           }}
+                           className="absolute inset-0 opacity-0 cursor-pointer"
+                         />
+                       </div>
+                     )}
+                     <span className="text-xs text-gray-400 font-bold">Cung cấp ảnh sản phẩm bị lỗi hoặc giao sai giúp HanaChibi giải quyết nhanh nhất nhé!</span>
+                   </div>
+                 </div>
+ 
+                 {/* 5. Phương thức hoàn tiền */}
+                 <div>
+                   <label className="block text-sm font-black text-gray-700 mb-3">5. Phương thức hoàn tiền 💰</label>
+                   <div className="flex flex-col gap-2">
+                     {[
+                       { id: "Ví Chibi", title: "Hoàn vào Ví Chibi", desc: "Tích hợp số dư trực tiếp trong ví tài khoản mua sắm." },
+                       { id: "Chuyển khoản", title: "Hoàn qua Chuyển khoản ngân hàng", desc: "Nhận tiền trực tiếp qua số tài khoản bạn cung cấp." },
+                       { id: "Thanh toán ban đầu", title: "Hoàn theo phương thức ban đầu", desc: "Hoàn lại theo cách bạn đã thanh toán cho đơn hàng." }
+                     ].map((method) => {
+                       const isSelected = returnRefundMethod === method.id;
+                       return (
+                         <div 
+                           key={method.id}
+                           onClick={() => setReturnRefundMethod(method.id)}
+                           className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-start gap-3 ${isSelected ? 'border-primary bg-primary-light/10 shadow-sm' : 'border-gray-100 bg-gray-50'}`}
+                         >
+                           <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${isSelected ? 'border-primary text-primary' : 'border-gray-300'}`}>
+                             {isSelected && <div className="w-2.5 h-2.5 bg-primary rounded-full" />}
+                           </div>
+                           <div>
+                             <p className="text-sm font-black text-gray-800">{method.title}</p>
+                             <p className="text-[10px] text-gray-400 font-bold">{method.desc}</p>
+                           </div>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 </div>
+               </div>
+ 
+               <div className="flex gap-4 mt-6 pt-4 border-t shrink-0">
+                 <button onClick={() => setShowReturnModal(null)} className="flex-1 py-4 rounded-2xl bg-gray-100 text-gray-500 font-black hover:bg-gray-200 transition-all text-sm">Đóng</button>
+                 <button 
+                   onClick={handleSubmitReturnRequest}
+                   className="flex-1 py-4 btn-primary transition-all text-sm shadow-xl"
+                 >
+                   Xác nhận gửi yêu cầu 🌸
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Return Detail Modal */}
+      <AnimatePresence>
+        {showReturnDetailModal && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowReturnDetailModal(null)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative bg-white w-full max-w-2xl rounded-[3rem] p-10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h3 className="text-2xl font-black text-gray-900 mb-1">Theo dõi yêu cầu hoàn tiền 🔄</h3>
+                  <p className="text-xs text-gray-400 font-bold">Ngày gửi: {new Date(showReturnDetailModal.createdAt).toLocaleDateString('vi-VN')}</p>
+                </div>
+                <button 
+                  onClick={() => setShowReturnDetailModal(null)} 
+                  className="p-3 hover:bg-gray-100 rounded-full transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-6 pr-2 custom-scrollbar flex-grow text-left">
+                {/* Status Timeline */}
+                <div className="p-6 bg-amber-50/50 rounded-3xl border border-amber-100/40">
+                  <h4 className="text-sm font-black text-amber-800 mb-4 flex items-center gap-1">📍 Trạng thái hiện tại: {showReturnDetailModal.status}</h4>
+                  <div className="space-y-4">
+                    {[
+                      { status: 'Chờ xử lý', label: '⏳ Yêu cầu mới gửi', desc: 'Đang đợi HanaChibi tiếp nhận & xem xét.' },
+                      { status: 'Đã duyệt', label: '✅ Đã duyệt yêu cầu', desc: 'Yêu cầu của bạn hợp lệ và đã được phê duyệt.' },
+                      { status: 'Đang gửi trả hàng', label: '🚚 Đang hoàn trả hàng', desc: 'Vui lòng đóng gói bưu phẩm và gửi bưu điện hoàn trả.' },
+                      { status: 'Đã nhận hàng hoàn', label: '📦 Đã nhận bưu gửi', desc: 'HanaChibi đã nhận lại bưu phẩm trả hoàn từ bưu cục.' },
+                      { status: 'Đã hoàn tiền', label: '💰 Hoàn tiền thành công', desc: 'Đã thực hiện hoàn tiền theo phương thức mong muốn.' },
+                      { status: 'Từ chối', label: '❌ Bị từ chối bồi hoàn', desc: 'Từ chối do bằng chứng hoặc nguyên do không thích ứng.' }
+                    ].map((step, idx) => {
+                      const isRefusedState = showReturnDetailModal.status === 'Từ chối';
+                      const isCurrent = showReturnDetailModal.status === step.status;
+                      
+                      const orderList = ['Chờ xử lý', 'Đã duyệt', 'Đang gửi trả hàng', 'Đã nhận hàng hoàn', 'Đã hoàn tiền'];
+                      const hasPassed = isRefusedState 
+                        ? (step.status === 'Chờ xử lý' || step.status === 'Từ chối')
+                        : (step.status !== 'Từ chối' && orderList.indexOf(step.status) <= orderList.indexOf(showReturnDetailModal.status) && orderList.indexOf(showReturnDetailModal.status) !== -1 && orderList.indexOf(step.status) !== -1);
+                      
+                      if (step.status === 'Từ chối' && !isRefusedState) return null;
+                      if (isRefusedState && step.status !== 'Chờ xử lý' && step.status !== 'Từ chối') return null;
+
+                      return (
+                        <div key={idx} className="flex gap-4">
+                          <div className="flex flex-col items-center">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${isCurrent ? 'bg-orange-500 text-white animate-pulse' : hasPassed ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                              {hasPassed ? <Check className="w-3.5 h-3.5 fill-current" /> : idx + 1}
+                            </div>
+                            {idx < 4 && !isRefusedState && <div className={`w-0.5 h-10 ${hasPassed ? 'bg-emerald-300' : 'bg-gray-100'}`} />}
+                          </div>
+                          <div>
+                            <p className={`text-sm font-black ${isCurrent ? 'text-orange-600' : hasPassed ? 'text-gray-800' : 'text-gray-400'}`}>{step.label}</p>
+                            <p className="text-[11px] text-gray-400 font-bold">{step.desc}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Reason detail & proof */}
+                <div className="space-y-4">
+                  <div className="border hover:shadow-sm transition-shadow p-5 rounded-2xl space-y-2">
+                    <p className="text-xs text-gray-400 font-extrabold uppercase">Lý do hoàn hàng</p>
+                    <p className="text-sm font-black text-gray-800">{showReturnDetailModal.reason}</p>
+                    {showReturnDetailModal.notes && (
+                      <p className="text-xs text-gray-500 bg-gray-50 p-3 rounded-xl italic">
+                        &ldquo; {showReturnDetailModal.notes} &rdquo;
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="border hover:shadow-sm transition-shadow p-5 rounded-2xl flex justify-between items-center">
+                    <div>
+                      <p className="text-xs text-gray-400 font-extrabold uppercase mb-1">Phương thức nhận tiền hoàn</p>
+                      <p className="text-sm font-black text-primary-dark">{showReturnDetailModal.refundMethod}</p>
+                    </div>
+                  </div>
+
+                  {showReturnDetailModal.proofImage && (
+                    <div>
+                      <p className="text-xs text-gray-400 font-extrabold uppercase mb-2">Ảnh minh chứng</p>
+                      <img src={showReturnDetailModal.proofImage} className="w-full max-h-56 object-cover rounded-2xl border" />
+                    </div>
+                  )}
+
+                  {showReturnDetailModal.adminNote && (
+                    <div className="p-5 bg-red-50 border-2 border-red-100 rounded-3xl">
+                      <p className="text-xs text-red-500 font-extrabold uppercase mb-1">Cần lưu ý từ phía HanaChibi</p>
+                      <p className="text-sm font-bold text-red-800">{showReturnDetailModal.adminNote}</p>
+                    </div>
+                  )}
+
+                  {/* Products involved list */}
+                  <div>
+                    <p className="text-xs text-gray-400 font-extrabold uppercase mb-2">Sản phẩm yêu cầu bồi hoàn</p>
+                    <div className="space-y-2">
+                      {(showReturnDetailModal.items || []).map((item: any, idx: number) => (
+                        <div key={idx} className="p-3 bg-gray-50 border rounded-2xl flex items-center gap-3">
+                          <img src={item.product?.image || "https://picsum.photos/seed/placeholder/100/100"} className="w-10 h-10 object-cover rounded-lg" />
+                          <div>
+                            <p className="text-xs font-black text-gray-800 line-clamp-1">{item.product?.name}</p>
+                            <p className="text-[10px] text-gray-400">{(item.product?.price || 0).toLocaleString('vi-VN')}đ x {item.quantity}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t shrink-0">
+                <button onClick={() => setShowReturnDetailModal(null)} className="w-full py-4 rounded-2xl bg-gray-100 text-gray-500 font-black hover:bg-gray-200 transition-all text-sm">Đóng</button>
               </div>
             </motion.div>
           </div>
@@ -5203,7 +6103,7 @@ export default function App() {
                     <Printer className="w-5 h-5" /> In hóa đơn
                   </button>
                 )}
-                {orderDetail.status !== 'Đã hủy' && (
+                {orderDetail.status !== 'Đã hủy' && (isAdminView || (orderDetail.status === 'Chờ xác nhận' || orderDetail.status === 'Chờ lấy hàng')) && (
                   <button 
                     onClick={() => {
                       setCancellingOrder(orderDetail);
